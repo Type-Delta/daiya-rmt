@@ -1,0 +1,7 @@
+[project]
+name = "daiya-rmt"
+version = "0.0.1"
+description = "(Near) Real-time Mixed-lingual Transcription optimized for technical meetings transcription. Powered by OpenAI's Whisper and Pyannote."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
