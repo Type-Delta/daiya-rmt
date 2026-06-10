@@ -1,0 +1,12 @@
+# .*/
+*
+!.gitignore
+!statefull-diarization/
+!statefull-diarization/**
+statefull-diarization/.env
+statefull-diarization/.env.*
+!statefull-diarization/.env.example
+statefull-diarization/.venv/
+statefull-diarization/__pycache__/
+statefull-diarization/**/__pycache__/
+artifacts/
