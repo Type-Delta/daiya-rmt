@@ -41,6 +41,10 @@ DEVICE=cuda
 CHUNK_SECONDS=20
 STRIDE_SECONDS=12
 MATCH_THRESHOLD=0.38
+MIN_NEW_PROFILE_SECONDS=6.0
+CANDIDATE_PROMOTE_SECONDS=3.0
+CANDIDATE_PROMOTE_OBSERVATIONS=2
+EMBEDDING_EXCLUDE_OVERLAP=true
 ```
 
 There is also a `.env.example` you can copy/edit locally.
@@ -53,5 +57,10 @@ The interesting bit is in `speaker_memory.py`: pyannote-local labels are mapped
 to persistent labels by comparing each chunk's returned `speaker_embeddings`
 against stored centroids.
 
-This demo preloads audio with `torchaudio` and passes an in-memory waveform to
+Weak unmatched labels no longer become permanent speakers immediately. Labels
+with no exclusive speech are reported as `OVERLAP_ONLY` unless they match an
+existing profile, and short unmatched labels become `CANDIDATE_*` until they
+collect enough clean exclusive speech to promote into `SPEAKER_*`.
+
+This demo preloads audio with SciPy/FFmpeg and passes an in-memory waveform to
 pyannote, so it does not depend on pyannote/torchcodec file decoding.

@@ -29,6 +29,13 @@ def load_env_file(path: str = ".env") -> None:
 
 load_env_file()
 
+
+def env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
 # Keep this throwaway-friendly: edit these constants or use env vars.
 AUDIO_PATH = os.getenv("AUDIO_PATH", "")
 HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN")
@@ -37,6 +44,10 @@ MODEL_ID = os.getenv("PYANNOTE_MODEL", "pyannote/speaker-diarization-community-1
 CHUNK_SECONDS = float(os.getenv("CHUNK_SECONDS", "20"))
 STRIDE_SECONDS = float(os.getenv("STRIDE_SECONDS", "12"))
 MATCH_THRESHOLD = float(os.getenv("MATCH_THRESHOLD", "0.38"))
+MIN_NEW_PROFILE_SECONDS = float(os.getenv("MIN_NEW_PROFILE_SECONDS", "6.0"))
+CANDIDATE_PROMOTE_SECONDS = float(os.getenv("CANDIDATE_PROMOTE_SECONDS", "3.0"))
+CANDIDATE_PROMOTE_OBSERVATIONS = int(os.getenv("CANDIDATE_PROMOTE_OBSERVATIONS", "2"))
+EMBEDDING_EXCLUDE_OVERLAP = env_bool("EMBEDDING_EXCLUDE_OVERLAP", True)
 DEVICE = os.getenv("DEVICE", "cuda")
 
 
@@ -190,7 +201,15 @@ def run_real_audio() -> SpeakerMemory:
     if DEVICE == "cuda" and torch.cuda.is_available():
         pipeline.to(torch.device("cuda"))
 
-    memory = SpeakerMemory(match_threshold=MATCH_THRESHOLD)
+    if hasattr(pipeline, "embedding_exclude_overlap"):
+        pipeline.embedding_exclude_overlap = EMBEDDING_EXCLUDE_OVERLAP
+
+    memory = SpeakerMemory(
+        match_threshold=MATCH_THRESHOLD,
+        min_new_profile_seconds=MIN_NEW_PROFILE_SECONDS,
+        candidate_promote_seconds=CANDIDATE_PROMOTE_SECONDS,
+        candidate_promote_observations=CANDIDATE_PROMOTE_OBSERVATIONS,
+    )
     chunk_samples = int(CHUNK_SECONDS * sample_rate)
     stride_samples = int(STRIDE_SECONDS * sample_rate)
     total_samples = waveform.shape[1]
@@ -198,6 +217,12 @@ def run_real_audio() -> SpeakerMemory:
     print(f"model={MODEL_ID}")
     print(f"audio={audio_path}")
     print(f"chunk={CHUNK_SECONDS}s stride={STRIDE_SECONDS}s threshold={MATCH_THRESHOLD}")
+    print(
+        "memory="
+        f"min_new={MIN_NEW_PROFILE_SECONDS}s "
+        f"promote={CANDIDATE_PROMOTE_SECONDS}s/{CANDIDATE_PROMOTE_OBSERVATIONS}obs "
+        f"exclude_overlap_embeddings={EMBEDDING_EXCLUDE_OVERLAP}"
+    )
     print()
 
     start = 0
@@ -245,7 +270,12 @@ def run_synthetic() -> SpeakerMemory:
     base_a /= np.linalg.norm(base_a)
     base_b /= np.linalg.norm(base_b)
 
-    memory = SpeakerMemory(match_threshold=MATCH_THRESHOLD)
+    memory = SpeakerMemory(
+        match_threshold=MATCH_THRESHOLD,
+        min_new_profile_seconds=MIN_NEW_PROFILE_SECONDS,
+        candidate_promote_seconds=CANDIDATE_PROMOTE_SECONDS,
+        candidate_promote_observations=CANDIDATE_PROMOTE_OBSERVATIONS,
+    )
     chunks = [
         (["SPEAKER_00", "SPEAKER_01"], np.vstack([base_a, base_b])),
         # Next pyannote chunk flips local labels. Memory should keep global ids stable.
