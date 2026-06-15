@@ -7,9 +7,10 @@ from scipy.optimize import linear_sum_assignment
 
 
 def _normalize(vector: np.ndarray) -> np.ndarray:
+    vector = np.nan_to_num(vector, nan=0.0, posinf=0.0, neginf=0.0)
     norm = np.linalg.norm(vector)
     if norm == 0 or not np.isfinite(norm):
-        return vector
+        return np.zeros_like(vector)
     return vector / norm
 
 
@@ -129,21 +130,53 @@ class SpeakerMemory:
     ) -> dict[str, str]:
         """Map pyannote-local labels to stable global labels and update memory."""
 
-        if local_centroids is None or len(local_labels) == 0:
+        if len(local_labels) == 0:
             return {}
+
+        if local_centroids is None:
+            return {label: "MISSING_EMBEDDING" for label in local_labels}
 
         speech_seconds = speech_seconds or {}
         local_centroids = np.asarray(local_centroids)
+        mapping: dict[str, str] = {}
+
+        if local_centroids.ndim != 2:
+            return {label: "INVALID_EMBEDDING" for label in local_labels}
+
+        if local_centroids.shape[0] < len(local_labels):
+            for label in local_labels[local_centroids.shape[0] :]:
+                mapping[label] = "MISSING_EMBEDDING"
+            local_labels = local_labels[: local_centroids.shape[0]]
+        elif local_centroids.shape[0] > len(local_labels):
+            local_centroids = local_centroids[: len(local_labels)]
+
+        if len(local_labels) == 0:
+            return mapping
+
         local_centroids = np.vstack([_normalize(c) for c in local_centroids])
 
-        mapping: dict[str, str] = {}
         speech_by_index = [
             max(0.0, float(speech_seconds.get(label, 0.0))) for label in local_labels
         ]
-        visible_indices = [index for index, seconds in enumerate(speech_by_index) if seconds > 0.0]
-        hidden_indices = [index for index, seconds in enumerate(speech_by_index) if seconds <= 0.0]
+        centroid_norms = np.linalg.norm(local_centroids, axis=1)
+        invalid_indices = {
+            index for index, norm in enumerate(centroid_norms) if norm <= 1e-12 or not np.isfinite(norm)
+        }
+        visible_indices = [
+            index
+            for index, seconds in enumerate(speech_by_index)
+            if seconds > 0.0 and index not in invalid_indices
+        ]
+        hidden_indices = [
+            index
+            for index, seconds in enumerate(speech_by_index)
+            if seconds <= 0.0 and index not in invalid_indices
+        ]
         unmatched_visible = set(visible_indices)
         fresh_speaker_ids: set[str] = set()
+
+        for local_index in invalid_indices:
+            mapping[local_labels[local_index]] = "INVALID_EMBEDDING"
 
         for local_index in hidden_indices:
             mapping[local_labels[local_index]] = "OVERLAP_ONLY"

@@ -7,7 +7,7 @@ Install:
 
 ```powershell
 uv venv --python 3.12
-uv --native-tls pip install -e ..\pyannote scipy matplotlib
+uv --native-tls pip install -e ..\pyannote scipy matplotlib sounddevice
 uv --native-tls pip install --reinstall torch torchaudio --index-url https://download.pytorch.org/whl/cu128
 uv --native-tls pip install python-certifi-win32
 .venv\Scripts\python -m ensurepip --upgrade
@@ -32,6 +32,18 @@ Save a speaker-memory clustering graph after the run:
 .venv\Scripts\python demo.py --mem-graph memory_profiles.png
 ```
 
+Run live microphone or desktop capture:
+
+```powershell
+.venv\Scripts\python demo.py --live
+```
+
+List live audio devices:
+
+```powershell
+.venv\Scripts\python -m sounddevice
+```
+
 With a `.env` file:
 
 ```text
@@ -45,6 +57,9 @@ MIN_NEW_PROFILE_SECONDS=6.0
 CANDIDATE_PROMOTE_SECONDS=3.0
 CANDIDATE_PROMOTE_OBSERVATIONS=2
 EMBEDDING_EXCLUDE_OVERLAP=true
+LIVE_SOURCE=mic
+LIVE_DEVICE=
+LIVE_SAMPLE_RATE=16000
 ```
 
 There is also a `.env.example` you can copy/edit locally.
@@ -61,6 +76,11 @@ Weak unmatched labels no longer become permanent speakers immediately. Labels
 with no exclusive speech are reported as `OVERLAP_ONLY` unless they match an
 existing profile, and short unmatched labels become `CANDIDATE_*` until they
 collect enough clean exclusive speech to promote into `SPEAKER_*`.
+
+Live mode prints one updating status line per processed chunk so it does not
+fill the scrollback. Use `LIVE_SOURCE=desktop` with a loopback-style device such
+as Stereo Mix, VoiceMeeter Output, or VB-CABLE Output. If auto-detection picks
+the wrong source, set `LIVE_DEVICE` to the index/name from `python -m sounddevice`.
 
 This demo preloads audio with SciPy/FFmpeg and passes an in-memory waveform to
 pyannote, so it does not depend on pyannote/torchcodec file decoding.
