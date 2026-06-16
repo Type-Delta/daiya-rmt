@@ -628,8 +628,7 @@ def run_synthetic() -> SpeakerMemory:
     print(memory.debug_table())
     return memory
 
-
-if __name__ == "__main__":
+def main():
     args = parse_args()
     if args.live:
         speaker_memory = run_live()
@@ -640,3 +639,6 @@ if __name__ == "__main__":
 
     if args.mem_graph:
         draw_memory_graph(speaker_memory, args.mem_graph)
+
+if __name__ == "__main__":
+    main()

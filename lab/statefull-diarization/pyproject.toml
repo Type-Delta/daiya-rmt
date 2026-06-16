@@ -1,0 +1,32 @@
+[project]
+name = "statefull-diarization"
+version = "0.0.1"
+description = "Throwaway pyannote stateful speaker diarization demo."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "matplotlib>=3.10.0",
+    "numpy>=2.0.0",
+    "pyannote-audio",
+    "python-certifi-win32>=1.6.1",
+    "scipy>=1.14.0",
+    "sounddevice>=0.5.0",
+    "torch>=2.8.0",
+    "torchaudio>=2.8.0",
+]
+
+[project.scripts]
+demo = "statefull_diarization.demo:main"
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+pyannote-audio = { path = "../pyannote", editable = true }
+torch = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true

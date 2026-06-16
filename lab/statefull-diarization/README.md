@@ -6,42 +6,37 @@ speaker memory.
 Install:
 
 ```powershell
-uv venv --python 3.12
-uv --native-tls pip install -e ..\pyannote scipy matplotlib sounddevice
-uv --native-tls pip install --reinstall torch torchaudio --index-url https://download.pytorch.org/whl/cu128
-uv --native-tls pip install python-certifi-win32
-.venv\Scripts\python -m ensurepip --upgrade
-.venv\Scripts\python -m pip install --upgrade pip
+uv sync --package statefull-diarization --system-certs
 ```
 
 Smoke test without model downloads:
 
 ```powershell
-.venv\Scripts\python demo.py
+uv run --package statefull-diarization --directory lab\statefull-diarization python demo.py
 ```
 
 Run real audio:
 
 ```powershell
-.venv\Scripts\python demo.py
+uv run --package statefull-diarization --directory lab\statefull-diarization python demo.py
 ```
 
 Save a speaker-memory clustering graph after the run:
 
 ```powershell
-.venv\Scripts\python demo.py --mem-graph memory_profiles.png
+uv run --package statefull-diarization --directory lab\statefull-diarization python demo.py --mem-graph memory_profiles.png
 ```
 
 Run live microphone or desktop capture:
 
 ```powershell
-.venv\Scripts\python demo.py --live
+uv run --package statefull-diarization --directory lab\statefull-diarization python demo.py --live
 ```
 
 List live audio devices:
 
 ```powershell
-.venv\Scripts\python -m sounddevice
+uv run --package statefull-diarization --directory lab\statefull-diarization python -m sounddevice
 ```
 
 With a `.env` file:

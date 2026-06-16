@@ -8,5 +8,6 @@ dependencies = []
 
 [tool.uv.workspace]
 members = [
+   "lab/statefull-diarization",
    "trainning/processor/whisper",
 ]
