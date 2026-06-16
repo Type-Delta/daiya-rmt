@@ -1,0 +1,48 @@
+[project]
+name = "whisper-dataset-pipeline"
+version = "0.1.0"
+description = "Audio LLM dataset labeling pipeline for Daiya-RMT."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "datasets>=3.6.0,<4.0.0",
+    "numpy>=2.2.0",
+    "openai>=1.86.0",
+    "pyannote.audio>=4.0.4,<5.0.0",
+    "python-certifi-win32>=1.6.1",
+    "python-dotenv>=1.1.0",
+    "rich>=14.0.0",
+    "silero-vad>=5.1.2",
+    "soundfile>=0.13.1",
+    "torch==2.11.0",
+    "torchaudio==2.11.0",
+    "tqdm>=4.67.1",
+]
+
+[project.scripts]
+daiya-audio-label = "daiya_whisper_pipeline.cli:main"
+daiya-whisper-clean = "daiya_whisper_pipeline.cli:main"
+start = "daiya_whisper_pipeline.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu128", marker = "sys_platform == 'win32' or sys_platform == 'linux'" },
+]
+torchaudio = [
+    { index = "pytorch-cu128", marker = "sys_platform == 'win32' or sys_platform == 'linux'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/daiya_whisper_pipeline"]
