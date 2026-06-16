@@ -11,6 +11,15 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from backends import PyannotePipelineBackend
+from metrics import MetricsRecorder
+from realtime import (
+    RealtimeDiarizationConfig,
+    RealtimeDiarizationDriver,
+    RollingWindowScheduler,
+    print_events,
+    run_replay,
+)
 from speaker_memory import SpeakerMemory
 
 
@@ -46,6 +55,12 @@ MODEL_ID = os.getenv("PYANNOTE_MODEL", "pyannote/speaker-diarization-community-1
 
 CHUNK_SECONDS = float(os.getenv("CHUNK_SECONDS", "20"))
 STRIDE_SECONDS = float(os.getenv("STRIDE_SECONDS", "12"))
+DIARIZATION_PROFILE = os.getenv("DIARIZATION_PROFILE", "balanced")
+DIARIZATION_WINDOW_SECONDS = os.getenv("DIARIZATION_WINDOW_SECONDS")
+DIARIZATION_HOP_SECONDS = os.getenv("DIARIZATION_HOP_SECONDS")
+DIARIZATION_LATENCY_SECONDS = os.getenv("DIARIZATION_LATENCY_SECONDS")
+DIARIZATION_COMMIT_DELAY_SECONDS = os.getenv("DIARIZATION_COMMIT_DELAY_SECONDS")
+METRICS_PATH = os.getenv("METRICS_PATH", "")
 MATCH_THRESHOLD = float(os.getenv("MATCH_THRESHOLD", "0.38"))
 MIN_NEW_PROFILE_SECONDS = float(os.getenv("MIN_NEW_PROFILE_SECONDS", "6.0"))
 CANDIDATE_PROMOTE_SECONDS = float(os.getenv("CANDIDATE_PROMOTE_SECONDS", "3.0"))
@@ -70,7 +85,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--live",
         action="store_true",
-        help="Capture live microphone/desktop audio and diarize after each chunk.",
+        help="Capture live microphone/desktop audio and run rolling realtime diarization.",
+    )
+    parser.add_argument(
+        "--legacy-chunks",
+        action="store_true",
+        help="Use the old chunk/stride loop instead of the rolling realtime driver.",
     )
     return parser.parse_args()
 
@@ -209,7 +229,17 @@ def load_pyannote_pipeline():
     from pyannote.audio import Pipeline
 
     try:
-        pipeline = Pipeline.from_pretrained(MODEL_ID, token=HF_TOKEN)
+        try:
+            pipeline = Pipeline.from_pretrained(MODEL_ID, token=HF_TOKEN)
+        except TypeError as exc:
+            if "token" not in str(exc):
+                raise
+            try:
+                pipeline = Pipeline.from_pretrained(MODEL_ID, use_auth_token=HF_TOKEN)
+            except TypeError as legacy_exc:
+                if "use_auth_token" not in str(legacy_exc):
+                    raise
+                pipeline = Pipeline.from_pretrained(MODEL_ID)
     except Exception as exc:
         message = str(exc)
         if "gated repo" in message.lower() or "403" in message:
@@ -242,6 +272,18 @@ def make_memory() -> SpeakerMemory:
     )
 
 
+def make_realtime_config() -> RealtimeDiarizationConfig:
+    config = RealtimeDiarizationConfig.for_profile(DIARIZATION_PROFILE)
+    return RealtimeDiarizationConfig(
+        window_seconds=float(DIARIZATION_WINDOW_SECONDS or config.window_seconds),
+        hop_seconds=float(DIARIZATION_HOP_SECONDS or config.hop_seconds),
+        latency_seconds=float(DIARIZATION_LATENCY_SECONDS or config.latency_seconds),
+        commit_delay_seconds=float(
+            DIARIZATION_COMMIT_DELAY_SECONDS or config.commit_delay_seconds
+        ),
+    )
+
+
 def draw_memory_graph(memory: SpeakerMemory, output_path: str) -> None:
     profiles = list(memory.profiles.values())
     if len(profiles) < 2:
@@ -261,7 +303,7 @@ def draw_memory_graph(memory: SpeakerMemory, output_path: str) -> None:
     np.fill_diagonal(distances, 0.0)
 
     labels = [
-        f"{profile.speaker_id} ({profile.observations} obs, {profile.total_speech_seconds:.1f}s)"
+        f"{profile.speaker_id} ({profile.observation_count} obs, {profile.total_speech_seconds:.1f}s)"
         for profile in profiles
     ]
     clustered = linkage(squareform(distances), method="average")
@@ -537,6 +579,78 @@ def run_live() -> SpeakerMemory:
     return memory
 
 
+def run_live_realtime() -> SpeakerMemory:
+    import sounddevice as sd
+
+    pipeline = load_pyannote_pipeline()
+    backend = PyannotePipelineBackend(pipeline)
+    memory = make_memory()
+    config = make_realtime_config()
+    sample_rate = LIVE_SAMPLE_RATE
+    device, channels, label = choose_live_device(sd)
+    scheduler = RollingWindowScheduler(sample_rate, config, channels=1)
+    metrics = MetricsRecorder(METRICS_PATH or None)
+    driver = RealtimeDiarizationDriver(backend, memory, config, metrics=metrics)
+
+    print(f"model={MODEL_ID}")
+    print(f"live_source={LIVE_SOURCE} device={label}")
+    print(
+        "realtime="
+        f"profile={DIARIZATION_PROFILE} window={config.window_seconds}s "
+        f"hop={config.hop_seconds}s latency={config.latency_seconds}s "
+        f"commit_delay={config.commit_delay_seconds}s sample_rate={sample_rate}"
+    )
+    print("Press Ctrl+C to stop and print speaker memory.")
+
+    audio_queue: queue.Queue[np.ndarray] = queue.Queue()
+    stream_warnings: list[str] = []
+
+    def callback(indata, _frames, _time_info, status) -> None:
+        if status:
+            stream_warnings.append(str(status))
+        audio_queue.put(indata.copy())
+
+    try:
+        with sd.InputStream(
+            samplerate=sample_rate,
+            device=device,
+            channels=channels,
+            dtype="float32",
+            blocksize=max(1, int(sample_rate * 0.25)),
+            callback=callback,
+        ):
+            while True:
+                block = np.asarray(audio_queue.get(), dtype=np.float32)
+                if block.ndim == 1:
+                    block = block[:, None]
+                if block.ndim != 2 or block.shape[0] == 0 or block.shape[1] == 0:
+                    print_bad_data("live realtime block", block)
+                    continue
+                block = np.nan_to_num(block, nan=0.0, posinf=0.0, neginf=0.0)
+                mono = np.mean(block[:, :channels], axis=1, dtype=np.float32)
+                for window in scheduler.append(mono):
+                    hop = driver.process_window(window)
+                    if stream_warnings:
+                        print(f"warning={stream_warnings[-1]}")
+                        stream_warnings.clear()
+                    print_events(hop.events)
+                    write_status_line(
+                        f"[Window {window.index}] "
+                        f"{window.start:.1f}-{window.end:.1f}s "
+                        f"events={len(hop.events)} "
+                        f"profiles={len(memory.profiles)} candidates={len(memory.candidates)}"
+                    )
+    except KeyboardInterrupt:
+        print()
+
+    print("\n=== metrics ===")
+    print(metrics.summary())
+    metrics.close()
+    print("\n=== speaker memory ===")
+    print(memory.debug_table())
+    return memory
+
+
 def run_real_audio() -> SpeakerMemory:
     if not AUDIO_PATH:
         raise SystemExit("Set AUDIO_PATH to a wav/mp3 file, or run without it for synthetic demo.")
@@ -596,6 +710,57 @@ def run_real_audio() -> SpeakerMemory:
     return memory
 
 
+def run_real_audio_realtime() -> SpeakerMemory:
+    if not AUDIO_PATH:
+        raise SystemExit("Set AUDIO_PATH to a wav/mp3 file, or run without it for synthetic demo.")
+
+    audio_path = Path(AUDIO_PATH)
+    waveform, sample_rate = load_audio(audio_path)
+    pipeline = load_pyannote_pipeline()
+    memory = make_memory()
+    config = make_realtime_config()
+
+    print(f"model={MODEL_ID}")
+    print(f"audio={audio_path}")
+    print(
+        "realtime="
+        f"profile={DIARIZATION_PROFILE} window={config.window_seconds}s "
+        f"hop={config.hop_seconds}s latency={config.latency_seconds}s "
+        f"commit_delay={config.commit_delay_seconds}s threshold={MATCH_THRESHOLD}"
+    )
+    print(
+        "memory="
+        f"min_new={MIN_NEW_PROFILE_SECONDS}s "
+        f"promote={CANDIDATE_PROMOTE_SECONDS}s/{CANDIDATE_PROMOTE_OBSERVATIONS}obs "
+        f"exclude_overlap_embeddings={EMBEDDING_EXCLUDE_OVERLAP}"
+    )
+    print()
+
+    backend = PyannotePipelineBackend(pipeline)
+    memory, timeline, metrics_summary = run_replay(
+        waveform,
+        sample_rate,
+        backend,
+        memory,
+        config,
+        metrics_path=METRICS_PATH or None,
+    )
+
+    print("\n=== realtime timeline ===")
+    for turn in timeline.turns:
+        final = "final" if turn.final else "provisional"
+        print(
+            f"{turn.turn_id} v{turn.version:<2} "
+            f"{turn.start:7.2f}-{turn.end:7.2f}s {turn.speaker_id:<16} {final}"
+        )
+
+    print("\n=== metrics ===")
+    print(metrics_summary)
+    print("\n=== speaker memory ===")
+    print(memory.debug_table())
+    return memory
+
+
 def run_synthetic() -> SpeakerMemory:
     """Tiny fake run showing identity retention across pyannote-like chunks."""
 
@@ -631,9 +796,9 @@ def run_synthetic() -> SpeakerMemory:
 def main():
     args = parse_args()
     if args.live:
-        speaker_memory = run_live()
+        speaker_memory = run_live() if args.legacy_chunks else run_live_realtime()
     elif AUDIO_PATH:
-        speaker_memory = run_real_audio()
+        speaker_memory = run_real_audio() if args.legacy_chunks else run_real_audio_realtime()
     else:
         speaker_memory = run_synthetic()
 
