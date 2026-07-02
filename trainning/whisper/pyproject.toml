@@ -1,0 +1,49 @@
+[project]
+name = "daiya-whisper-lora"
+version = "0.1.0"
+description = "LoRA fine-tuning tools for Daiya Whisper mixed-lingual ASR."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "accelerate>=0.33.0,<2.0.0",
+    "datasets>=3.6.0,<4.0.0",
+    "evaluate>=0.4.2,<1.0.0",
+    "jiwer>=3.0.4,<5.0.0",
+    "librosa>=0.10.2,<1.0.0",
+    "numpy>=2.2.0",
+    "peft>=0.12.0,<1.0.0",
+    "python-certifi-win32>=1.6.1",
+    "rich>=14.0.0",
+    "soundfile>=0.13.1",
+    "tensorboard>=2.17.0,<3.0.0",
+    "torch==2.11.0",
+    "torchaudio==2.11.0",
+    "transformers>=4.41.0,<5.0.0",
+]
+
+[project.scripts]
+daiya-whisper-lora = "daiya_whisper_lora.cli:main"
+start = "daiya_whisper_lora.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu128", marker = "sys_platform == 'win32' or sys_platform == 'linux'" },
+]
+torchaudio = [
+    { index = "pytorch-cu128", marker = "sys_platform == 'win32' or sys_platform == 'linux'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/daiya_whisper_lora"]

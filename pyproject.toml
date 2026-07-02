@@ -10,4 +10,5 @@ dependencies = []
 members = [
    "lab/statefull-diarization",
    "trainning/processor/whisper",
+   "trainning/whisper",
 ]

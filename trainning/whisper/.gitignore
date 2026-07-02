@@ -1,0 +1,5 @@
+runs/
+outputs/
+checkpoints/
+wandb/
+*.log
