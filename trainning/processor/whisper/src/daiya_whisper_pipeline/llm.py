@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import base64
 from collections import defaultdict
+from collections.abc import Callable
 import json
 
 from openai import OpenAI
@@ -124,6 +125,7 @@ def _transcribe_source_chunks(
     chunks: list[Chunk],
     transcriber: OpenRouterAudioTranscriber,
     config: PipelineConfig,
+    on_chunk_transcribed: Callable[[], None] | None = None,
 ) -> list[LabeledChunk]:
     context = TranscriptionContext()
     labeled: list[LabeledChunk] = []
@@ -132,6 +134,8 @@ def _transcribe_source_chunks(
         context = _next_context(context, item, config.llm_context_max_chars)
         item.extra["context_after"] = context.text
         labeled.append(item)
+        if on_chunk_transcribed:
+            on_chunk_transcribed()
     return labeled
 
 
@@ -149,10 +153,11 @@ def transcribe_chunks(
 
     labeled: list[LabeledChunk] = []
     with ThreadPoolExecutor(max_workers=config.llm_max_workers) as executor:
-        futures = [
-            executor.submit(_transcribe_source_chunks, source_chunks, transcriber, config)
-            for source_chunks in by_source.values()
-        ]
-        for future in tqdm(as_completed(futures), total=len(futures), desc="llm transcribe sources"):
-            labeled.extend(future.result())
+        with tqdm(total=len(chunks), desc="llm transcribe chunks") as progress:
+            futures = [
+                executor.submit(_transcribe_source_chunks, source_chunks, transcriber, config, progress.update)
+                for source_chunks in by_source.values()
+            ]
+            for future in as_completed(futures):
+                labeled.extend(future.result())
     return sorted(labeled, key=lambda item: (str(item.chunk.source.source_path), item.chunk.index))

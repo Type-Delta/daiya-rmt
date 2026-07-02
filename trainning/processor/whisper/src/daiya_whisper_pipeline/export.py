@@ -22,7 +22,6 @@ def export_audiofolder(labeled_chunks: list[LabeledChunk], config: PipelineConfi
             row = {
                 "file_name": target_name.replace("\\", "/"),
                 config.text_column: item.transcript_text,
-                "llm_text": item.transcript_text,
                 "language": item.language or config.language_hint,
                 "context_before": item.extra.get("context_before", ""),
                 "context_after": item.extra.get("context_after", ""),
