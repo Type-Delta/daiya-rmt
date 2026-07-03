@@ -55,15 +55,13 @@ Frontend package scripts in `daiya/web`:
 Build the web UI:
 
 ```powershell
-cd daiya\web
-npm run build
+uv run --package daiya web-build
 ```
 
 Run the web UI in Vite dev mode:
 
 ```powershell
-cd daiya\web
-npm run dev
+uv run --package daiya web dev
 ```
 
 Run the API and serve the built UI:
@@ -87,7 +85,7 @@ http://192.168.1.168:8000/
 Run the offline replay CLI:
 
 ```powershell
-uv run --package daiya daiya trainning\dataset\raw\whisper\Th-En_sample_02.mp3 --no-pace --json
+uv run --package daiya web replay trainning\dataset\raw\whisper\Th-En_sample_02.mp3 --no-pace --json
 ```
 
 Useful CLI options:
@@ -239,8 +237,7 @@ uv lock --check
 Frontend build:
 
 ```powershell
-cd daiya\web
-npm run build
+uv run --package daiya web-build
 ```
 
 ## Current Prototype Notes

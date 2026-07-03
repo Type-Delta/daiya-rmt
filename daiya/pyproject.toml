@@ -23,6 +23,8 @@ vad = [
 
 [project.scripts]
 daiya = "daiya.cli:main"
+web = "daiya.web:main"
+web-build = "daiya.web:build_main"
 
 [build-system]
 requires = ["hatchling"]
