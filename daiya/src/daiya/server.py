@@ -266,7 +266,15 @@ def _config_from_dict(data: dict[str, Any]) -> PipelineConfig:
     ):
         if key in filtered:
             filtered[key] = float(filtered[key])
-    for key in ("asr_model", "asr_device", "asr_compute_type", "language", "initial_prompt", "diarization_profile"):
+    for key in (
+        "asr_model",
+        "asr_device",
+        "asr_compute_type",
+        "language",
+        "initial_prompt",
+        "diarization_profile",
+        "diarization_backend",
+    ):
         if key in filtered:
             filtered[key] = str(filtered[key])
     for key in ("enable_asr", "enable_diarization"):

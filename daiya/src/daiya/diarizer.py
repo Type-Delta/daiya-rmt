@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,6 +25,7 @@ class DiarizerConfig:
     hop_seconds: float | None = None
     latency_seconds: float | None = None
     commit_delay_seconds: float | None = None
+    match_threshold: float | None = None
 
 
 class NullDiarizer:
@@ -70,11 +72,15 @@ class LabRealtimeDiarizer:
         modules = load_lab_modules()
         realtime = modules["realtime"]
         speaker_memory = modules["speaker_memory"]
-        lab_config = _make_lab_config(realtime, config or DiarizerConfig())
+        config = config or DiarizerConfig()
+        lab_config = _make_lab_config(realtime, config)
         self._scheduler = realtime.RollingWindowScheduler(SAMPLE_RATE, lab_config, channels=1)
+        memory_kwargs = {}
+        if config.match_threshold is not None:
+            memory_kwargs["match_threshold"] = config.match_threshold
         self._driver = realtime.RealtimeDiarizationDriver(
             backend=backend,
-            memory=speaker_memory.SpeakerMemory(),
+            memory=speaker_memory.SpeakerMemory(**memory_kwargs),
             config=lab_config,
         )
 
@@ -94,16 +100,42 @@ def create_diarizer(
     *,
     backend: object | None = None,
     config: DiarizerConfig | None = None,
+    prefer_real: bool = True,
     allow_null: bool = True,
 ) -> LabRealtimeDiarizer | NullDiarizer:
     if backend is not None:
         return LabRealtimeDiarizer(backend, config=config)
+    if prefer_real:
+        try:
+            return LabRealtimeDiarizer(create_lab_pyannote_backend(), config=config)
+        except DiarizerUnavailableError:
+            if not allow_null:
+                raise
     if allow_null:
         delay = 0.0 if config is None else float(config.commit_delay_seconds or 0.0)
         return NullDiarizer(commit_delay_seconds=delay)
     raise DiarizerUnavailableError(
         "pyannote/lab diarization backend is not configured; pass a lab backend or allow null fallback"
     )
+
+
+def create_lab_pyannote_backend(root: Path | None = None) -> object:
+    """Load the lab pyannote pipeline with the same patches as the lab demo."""
+
+    lab_root = root or _default_lab_root()
+    _load_env_file(lab_root / ".env")
+    try:
+        modules = load_lab_modules(lab_root)
+        demo = modules["demo"]
+        backends = modules["backends"]
+        pipeline = demo.load_pyannote_pipeline()
+        return backends.PyannotePipelineBackend(pipeline)
+    except SystemExit as exc:
+        raise DiarizerUnavailableError(str(exc)) from exc
+    except DiarizerUnavailableError:
+        raise
+    except Exception as exc:
+        raise DiarizerUnavailableError(f"failed to load lab pyannote backend: {exc}") from exc
 
 
 def load_lab_modules(root: Path | None = None) -> dict[str, ModuleType]:
@@ -117,7 +149,7 @@ def load_lab_modules(root: Path | None = None) -> dict[str, ModuleType]:
     try:
         return {
             name: _load_module_from_path(f"daiya_lab_statefull_{name}", lab_root / f"{name}.py")
-            for name in ("timeline", "backends", "speaker_memory", "realtime")
+            for name in ("timeline", "backends", "metrics", "speaker_memory", "realtime", "demo")
         }
     finally:
         if inserted:
@@ -146,6 +178,20 @@ def _load_module_from_path(name: str, path: Path) -> ModuleType:
 
 def _default_lab_root() -> Path:
     return Path(__file__).resolve().parents[3] / "lab" / "statefull-diarization"
+
+
+def _load_env_file(path: Path) -> None:
+    if not path.exists():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key:
+            os.environ.setdefault(key, value)
 
 
 def _make_lab_config(realtime: ModuleType, config: DiarizerConfig) -> object:

@@ -24,7 +24,8 @@ class PipelineConfig:
     vad_threshold: float = 0.012
     utterance_cap_seconds: float = 8.0
     diarization_profile: str = "balanced"
-    diarization_commit_delay_seconds: float = 0.0
+    diarization_backend: str = "auto"
+    diarization_commit_delay_seconds: float | None = None
     window_seconds: float | None = None
     hop_seconds: float | None = None
     latency_seconds: float | None = None
@@ -58,7 +59,9 @@ class StreamingPipeline:
                         if self.config.commit_delay_seconds is not None
                         else self.config.diarization_commit_delay_seconds
                     ),
-                )
+                    match_threshold=self.config.match_threshold,
+                ),
+                prefer_real=self.config.diarization_backend != "null",
             )
             if self.config.enable_diarization
             else None
@@ -194,6 +197,9 @@ def _with_runtime_defaults(config: PipelineConfig) -> PipelineConfig:
         updates["language"] = os.getenv("DAIYA_ASR_LANGUAGE") or None
     if config.initial_prompt is None:
         updates["initial_prompt"] = os.getenv("DAIYA_ASR_INITIAL_PROMPT") or None
+    configured_diarization_backend = os.getenv("DAIYA_DIARIZATION_BACKEND")
+    if configured_diarization_backend and config.diarization_backend == "auto":
+        updates["diarization_backend"] = configured_diarization_backend
     return replace(config, **updates) if updates else config
 
 

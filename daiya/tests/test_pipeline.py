@@ -15,7 +15,13 @@ def _bypass_pipeline() -> StreamingPipeline:
 
 class EngineToggleTests(unittest.TestCase):
     def test_asr_off_emits_textless_speaker_events(self) -> None:
-        pipeline = StreamingPipeline(PipelineConfig(enable_asr=False, commit_delay_seconds=0.0))
+        pipeline = StreamingPipeline(
+            PipelineConfig(
+                enable_asr=False,
+                diarization_backend="null",
+                commit_delay_seconds=0.0,
+            )
+        )
         self.assertIsNone(pipeline.segmenter)
 
         chunk = PCMChunk(samples=np.zeros(SAMPLE_RATE, dtype=np.float32), start_time=0.0)

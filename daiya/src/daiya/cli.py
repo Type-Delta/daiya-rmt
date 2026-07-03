@@ -26,6 +26,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--compute-type", default="int8_float16", help="faster-whisper compute type.")
     parser.add_argument("--language", default=None, help="Optional ASR language hint.")
     parser.add_argument("--initial-prompt", default=None, help="Optional ASR prompt/context.")
+    parser.add_argument(
+        "--diarization-backend",
+        choices=("auto", "null"),
+        default="auto",
+        help="Use lab pyannote when available, or force the UNKNOWN fallback.",
+    )
     parser.add_argument("--chunk-seconds", type=float, default=0.5)
     parser.add_argument("--no-pace", action="store_true", help="Replay as fast as possible.")
     parser.add_argument("--json", action="store_true", help="Print raw JSON events.")
@@ -40,6 +46,7 @@ async def run(args: argparse.Namespace) -> int:
             asr_compute_type=args.compute_type,
             language=args.language,
             initial_prompt=args.initial_prompt,
+            diarization_backend=args.diarization_backend,
         )
     )
     source = FileReplayAudioSource(
