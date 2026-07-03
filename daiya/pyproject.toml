@@ -1,0 +1,35 @@
+[project]
+name = "daiya"
+version = "0.0.1"
+description = "Daiya v0 realtime mixed-lingual transcription prototype backend."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0,<1.0.0",
+    "faster-whisper>=1.0.0,<2.0.0",
+    "numpy>=2.0.0",
+    "pydantic>=2.8.0,<3.0.0",
+    "python-multipart>=0.0.9,<1.0.0",
+    "soundfile>=0.13.0,<1.0.0",
+    "uvicorn[standard]>=0.30.0,<1.0.0",
+]
+
+[project.optional-dependencies]
+capture = [
+    "sounddevice>=0.5.0,<1.0.0",
+]
+vad = [
+    "torch>=2.8.0",
+]
+
+[project.scripts]
+daiya = "daiya.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/daiya"]

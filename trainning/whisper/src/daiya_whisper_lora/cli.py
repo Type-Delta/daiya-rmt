@@ -2,8 +2,20 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from .train import TrainingConfig, inspect_dataset, train
+from .merge import (
+    DEFAULT_BASE_MODEL,
+    DEFAULT_QUANTIZATION,
+    MergeConfig,
+    default_adapter_path,
+    default_ct2_output_dir,
+    default_merged_output_dir,
+    merge_and_convert,
+)
+
+if TYPE_CHECKING:
+    from .train import TrainingConfig
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -62,6 +74,27 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--push-to-hub", action="store_true")
     train_parser.add_argument("--hub-model-id", default=None)
 
+    merge_parser = subparsers.add_parser(
+        "merge",
+        help="Merge a Whisper LoRA adapter, convert it to CTranslate2, and optionally run a WER gate.",
+    )
+    merge_parser.add_argument("--adapter-path", type=Path, default=default_adapter_path())
+    merge_parser.add_argument("--base-model", default=DEFAULT_BASE_MODEL)
+    merge_parser.add_argument("--merged-output-dir", type=Path, default=default_merged_output_dir())
+    merge_parser.add_argument("--ct2-output-dir", type=Path, default=default_ct2_output_dir())
+    merge_parser.add_argument("--quantization", default=DEFAULT_QUANTIZATION)
+    merge_parser.add_argument("--dataset-dir", type=Path, default=default_dataset_dir())
+    merge_parser.add_argument("--max-eval-samples", type=int, default=8)
+    merge_parser.add_argument("--allowed-absolute-wer-drift", type=float, default=1.0)
+    merge_parser.add_argument("--skip-convert", action="store_true")
+    merge_parser.add_argument("--skip-wer", action="store_true")
+    merge_parser.add_argument("--no-force", dest="force", action="store_false")
+    merge_parser.set_defaults(force=True)
+    merge_parser.add_argument("--device", default="auto", help="Torch/faster-whisper device, e.g. auto, cuda, cpu.")
+    merge_parser.add_argument("--task", default="transcribe")
+    merge_parser.add_argument("--language", default=None)
+    merge_parser.add_argument("--generation-max-length", type=int, default=225)
+
     return parser
 
 
@@ -83,6 +116,8 @@ def default_output_dir() -> Path:
 
 
 def config_from_args(args: argparse.Namespace) -> TrainingConfig:
+    from .train import TrainingConfig
+
     return TrainingConfig(
         dataset_dir=args.dataset_dir,
         model_name_or_path=args.model_name_or_path,
@@ -124,16 +159,58 @@ def config_from_args(args: argparse.Namespace) -> TrainingConfig:
     )
 
 
+def merge_config_from_args(args: argparse.Namespace) -> MergeConfig:
+    return MergeConfig(
+        adapter_path=args.adapter_path,
+        base_model=args.base_model,
+        merged_output_dir=args.merged_output_dir,
+        ct2_output_dir=args.ct2_output_dir,
+        quantization=args.quantization,
+        dataset_dir=args.dataset_dir,
+        max_eval_samples=args.max_eval_samples,
+        allowed_absolute_wer_drift=args.allowed_absolute_wer_drift,
+        skip_convert=args.skip_convert,
+        skip_wer=args.skip_wer,
+        force=args.force,
+        device=args.device,
+        task=args.task,
+        language=args.language,
+        generation_max_length=args.generation_max_length,
+    )
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
     if args.command == "inspect":
+        from .train import inspect_dataset
+
         inspect_dataset(args.dataset_dir)
         return
 
     if args.command == "train":
+        from .train import train
+
         train(config_from_args(args))
+        return
+
+    if args.command == "merge":
+        result = merge_and_convert(merge_config_from_args(args))
+        print(f"Merged model: {result.merged_model_dir}")
+        if result.ct2_model_dir is not None:
+            print(f"CT2 model: {result.ct2_model_dir}")
+        if result.wer is not None:
+            if result.wer.skipped:
+                print(f"WER sanity check skipped: {result.wer.reason}")
+            else:
+                print(
+                    "WER sanity check: "
+                    f"PEFT={result.wer.peft_wer:.2f}, "
+                    f"CT2={result.wer.ct2_wer:.2f}, "
+                    f"drift={result.wer.absolute_drift:.2f}, "
+                    f"samples={result.wer.sample_count}"
+                )
         return
 
     parser.print_help()
