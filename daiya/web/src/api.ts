@@ -14,7 +14,7 @@ export function httpUrl(path: string): string {
   return new URL(path, serverBase).toString();
 }
 
-export function wsUrl(path: string, params?: Record<string, string | number>): string {
+export function wsUrl(path: string, params?: Record<string, string | number | boolean>): string {
   const url = new URL(path, serverBase);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   if (params) {
@@ -49,6 +49,7 @@ export type SegmentPatch = Partial<Segment> & { segment_id: string };
 
 export type ServerEvent =
   | { kind: 'segment'; phase: 'partial' | 'final' | 'update'; patch: SegmentPatch }
+  | { kind: 'tick'; time: number }
   | { kind: 'log'; level: string; message: string }
   | { kind: 'error'; message: string };
 
@@ -77,6 +78,9 @@ export function parseEvent(raw: string): ServerEvent | null {
     if (Array.isArray(d.words)) patch.words = d.words as Word[];
     return { kind: 'segment', phase: type.slice('transcript.'.length) as 'partial' | 'final' | 'update', patch };
   }
+  if (type === 'tick') {
+    return typeof d.time === 'number' ? { kind: 'tick', time: d.time } : null;
+  }
   if (type === 'log') {
     return {
       kind: 'log',
@@ -93,6 +97,8 @@ export function parseEvent(raw: string): ServerEvent | null {
 // ---- tuning settings -----------------------------------------------------
 
 export interface Settings {
+  enable_asr: boolean;
+  enable_diarization: boolean;
   vad_threshold: number;
   utterance_cap_seconds: number;
   window_seconds: number;
@@ -104,6 +110,8 @@ export interface Settings {
 // Defaults mirror the lab's RealtimeDiarizationConfig "balanced" profile
 // and MATCH_THRESHOLD=0.38 from lab/statefull-diarization.
 export const DEFAULT_SETTINGS: Settings = {
+  enable_asr: true,
+  enable_diarization: true,
   vad_threshold: 0.012,
   utterance_cap_seconds: 8,
   window_seconds: 10,
@@ -112,8 +120,15 @@ export const DEFAULT_SETTINGS: Settings = {
   match_threshold: 0.38,
 };
 
+// Engine on/off switches. Off = that engine is never built for the session
+// and the multiplexer is bypassed, so they only take effect on the next Start.
+export const ENGINE_TOGGLES: { key: 'enable_asr' | 'enable_diarization'; label: string; hint: string }[] = [
+  { key: 'enable_asr', label: 'Transcription (ASR)', hint: 'Off: speaker timeline only, no text' },
+  { key: 'enable_diarization', label: 'Speaker diarization', hint: 'Off: raw ASR text, no speaker labels' },
+];
+
 export interface SettingField {
-  key: keyof Settings;
+  key: Exclude<keyof Settings, 'enable_asr' | 'enable_diarization'>;
   label: string;
   min: number;
   max: number;

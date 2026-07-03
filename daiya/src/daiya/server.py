@@ -269,6 +269,9 @@ def _config_from_dict(data: dict[str, Any]) -> PipelineConfig:
     for key in ("asr_model", "asr_device", "asr_compute_type", "language", "initial_prompt", "diarization_profile"):
         if key in filtered:
             filtered[key] = str(filtered[key])
+    for key in ("enable_asr", "enable_diarization"):
+        if key in filtered:
+            filtered[key] = str(filtered[key]).lower() not in {"0", "false", "no", "off"}
     return PipelineConfig(**filtered)
 
 

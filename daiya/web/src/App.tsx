@@ -18,6 +18,7 @@ import {
 } from '@phosphor-icons/react';
 import {
   DEFAULT_SETTINGS,
+  ENGINE_TOGGLES,
   SETTING_FIELDS,
   endpoints,
   httpUrl,
@@ -133,6 +134,8 @@ function useSession(pushLog: (level: string, text: string) => void) {
   const [status, setStatus] = useState<Status>('idle');
   const [error, setError] = useState<string | null>(null);
   const [segments, setSegments] = useState<Segment[]>([]);
+  const [clock, setClock] = useState(0);
+  const [diarOnly, setDiarOnly] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const micRef = useRef<MicHandle | null>(null);
   const replayAbortRef = useRef<AbortController | null>(null);
@@ -154,6 +157,7 @@ function useSession(pushLog: (level: string, text: string) => void) {
       const ev = parseEvent(raw);
       if (!ev) return;
       if (ev.kind === 'segment') setSegments((prev) => upsertSegment(prev, ev.phase, ev.patch));
+      else if (ev.kind === 'tick') setClock(ev.time);
       else if (ev.kind === 'log') pushLog(ev.level, ev.message);
       else setError(ev.message);
     },
@@ -225,6 +229,8 @@ function useSession(pushLog: (level: string, text: string) => void) {
     (source: SourceId, settings: Settings, file: File | null) => {
       setError(null);
       setSegments([]);
+      setClock(0);
+      setDiarOnly(!settings.enable_asr && settings.enable_diarization);
       setStatus('connecting');
       closingRef.current = false;
       replayAbortRef.current?.abort();
@@ -295,7 +301,7 @@ function useSession(pushLog: (level: string, text: string) => void) {
     return false;
   }, []);
 
-  return { status, error, dismissError: () => setError(null), segments, start, stop, pushSettings };
+  return { status, error, dismissError: () => setError(null), segments, clock, diarOnly, start, stop, pushSettings };
 }
 
 // ---- shared scroll behavior ---------------------------------------------------
@@ -394,6 +400,23 @@ function SettingsPanel({
             <X size={16} aria-hidden />
           </button>
         )}
+      </div>
+      <div className="space-y-3 border-b border-edge pb-4">
+        {ENGINE_TOGGLES.map((t) => (
+          <div key={t.key} className="space-y-1">
+            <label className="flex cursor-pointer items-center justify-between gap-2 text-sm">
+              {t.label}
+              <input
+                type="checkbox"
+                checked={settings[t.key]}
+                onChange={(e) => onChange({ ...settings, [t.key]: e.target.checked })}
+                className={`h-4 w-4 accent-[var(--primary)] ${FOCUS_RING}`}
+              />
+            </label>
+            <p className="text-xs text-faint">{t.hint}</p>
+          </div>
+        ))}
+        <p className="text-xs text-faint">Engine toggles take effect on the next Start.</p>
       </div>
       {SETTING_FIELDS.map((f) => {
         const value = settings[f.key];
@@ -517,6 +540,93 @@ function Transcript({ segments, status }: { segments: Segment[]; status: Status 
   );
 }
 
+// ---- diarization-only timeline ---------------------------------------------
+
+// Turns closer together than this merge into one line; longer gaps become a
+// "No speaker" line. Matches the diarizer's ~1 s hop granularity.
+const RUN_GAP_SECONDS = 1.0;
+
+interface SpeakerRun {
+  speaker: string | null; // null = silence / no speaker detected
+  start: number;
+  end: number;
+}
+
+/** One line per speaker change; silence gaps (and the live clock) become "No speaker" lines. */
+function buildRuns(segments: Segment[], clock: number): SpeakerRun[] {
+  const runs: SpeakerRun[] = [];
+  for (const s of segments) {
+    const last = runs[runs.length - 1];
+    if (last && last.speaker === s.speaker && s.start - last.end <= RUN_GAP_SECONDS) {
+      last.end = Math.max(last.end, s.end);
+      continue;
+    }
+    if (last && s.start - last.end > RUN_GAP_SECONDS) {
+      runs.push({ speaker: null, start: last.end, end: s.start });
+    }
+    runs.push({ speaker: s.speaker, start: s.start, end: s.end });
+  }
+  const last = runs[runs.length - 1];
+  if (!last) {
+    if (clock > 0) runs.push({ speaker: null, start: 0, end: clock });
+  } else if (clock - last.end > RUN_GAP_SECONDS) {
+    runs.push({ speaker: null, start: last.end, end: clock });
+  }
+  return runs;
+}
+
+function SpeakerTimeline({ segments, clock, status }: { segments: Segment[]; clock: number; status: Status }) {
+  const runs = useMemo(() => buildRuns(segments, clock), [segments, clock]);
+  const colorOf = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const r of runs) {
+      if (r.speaker && !map.has(r.speaker)) {
+        map.set(r.speaker, SPEAKER_COLORS[map.size % SPEAKER_COLORS.length]);
+      }
+    }
+    return (speaker: string | null) => (speaker && map.get(speaker)) || 'var(--faint)';
+  }, [runs]);
+  const { ref, onScroll } = useStickToBottom(runs);
+
+  if (runs.length === 0) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+        <Waveform size={40} className="text-faint" aria-hidden />
+        <p className="font-medium">{status === 'live' ? 'Listening…' : 'Speaker timeline'}</p>
+        <p className="max-w-sm text-sm text-muted">
+          ASR is off — this session shows who is speaking and when, with no transcript text.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div ref={ref} onScroll={onScroll} className="h-full overflow-y-auto px-4 py-4 md:px-8">
+      <div className="mx-auto max-w-2xl">
+        {runs.map((r, i) => {
+          const live = status === 'live' && i === runs.length - 1;
+          const color = colorOf(r.speaker);
+          return (
+            <div key={i} className="flex items-center gap-3 py-1.5">
+              <span
+                aria-hidden
+                className={`h-2 w-2 shrink-0 rounded-full ${live ? 'animate-pulse' : ''}`}
+                style={{ background: color }}
+              />
+              <span className={`text-sm font-semibold ${r.speaker ? '' : 'font-normal text-faint'}`} style={r.speaker ? { color } : undefined}>
+                {r.speaker ?? 'No speaker'}
+              </span>
+              <span className="text-xs tabular-nums text-muted">
+                {fmtTime(r.start)} – {fmtTime(r.end)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function levelClass(level: string): string {
   if (level === 'error' || level === 'critical') return 'text-danger';
   if (level === 'warning' || level === 'warn') return 'text-warn';
@@ -596,7 +706,7 @@ export default function App() {
   const [applied, setApplied] = useState(false);
 
   const { lines, push, clear } = useConsole(consoleOpen);
-  const { status, error, dismissError, segments, start, stop, pushSettings } = useSession(push);
+  const { status, error, dismissError, segments, clock, diarOnly, start, stop, pushSettings } = useSession(push);
   const running = status === 'live' || status === 'connecting';
 
   const applyLive = () => {
@@ -686,8 +796,14 @@ export default function App() {
           <button
             type="button"
             onClick={() => start(source, settings, file)}
-            disabled={source === 'replay' && !file}
-            title={source === 'replay' && !file ? 'Choose a file first' : undefined}
+            disabled={(source === 'replay' && !file) || (!settings.enable_asr && !settings.enable_diarization)}
+            title={
+              !settings.enable_asr && !settings.enable_diarization
+                ? 'Enable ASR or diarization first'
+                : source === 'replay' && !file
+                  ? 'Choose a file first'
+                  : undefined
+            }
             className={`flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-semibold text-primary-ink transition-opacity duration-150 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 ${FOCUS_RING}`}
           >
             <Play size={15} weight="fill" aria-hidden />
@@ -698,7 +814,11 @@ export default function App() {
 
       <div className="flex min-h-0 flex-1">
         <main className="min-w-0 flex-1">
-          <Transcript segments={segments} status={status} />
+          {diarOnly ? (
+            <SpeakerTimeline segments={segments} clock={clock} status={status} />
+          ) : (
+            <Transcript segments={segments} status={status} />
+          )}
         </main>
         <aside className="hidden w-80 shrink-0 overflow-y-auto border-l border-edge bg-surface lg:block">
           <SettingsPanel

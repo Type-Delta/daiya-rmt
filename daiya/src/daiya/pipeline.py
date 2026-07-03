@@ -14,6 +14,8 @@ from .mux import TranscriptEvent, TranscriptMultiplexer
 
 @dataclass(frozen=True)
 class PipelineConfig:
+    enable_asr: bool = True
+    enable_diarization: bool = True
     asr_model: str | None = None
     asr_device: str = "auto"
     asr_compute_type: str = "int8_float16"
@@ -36,42 +38,78 @@ class StreamingPipeline:
     def __init__(self, config: PipelineConfig | None = None) -> None:
         self.config = _with_runtime_defaults(config or PipelineConfig())
         self.mux = TranscriptMultiplexer()
-        self.segmenter = create_utterance_segmenter(
-            threshold=self.config.vad_threshold,
-            max_utterance_seconds=self.config.utterance_cap_seconds,
-        )
-        self.diarizer = create_diarizer(
-            config=DiarizerConfig(
-                profile=self.config.diarization_profile,
-                window_seconds=self.config.window_seconds,
-                hop_seconds=self.config.hop_seconds,
-                latency_seconds=self.config.latency_seconds,
-                commit_delay_seconds=(
-                    self.config.commit_delay_seconds
-                    if self.config.commit_delay_seconds is not None
-                    else self.config.diarization_commit_delay_seconds
-                ),
+        self.segmenter = (
+            create_utterance_segmenter(
+                threshold=self.config.vad_threshold,
+                max_utterance_seconds=self.config.utterance_cap_seconds,
             )
+            if self.config.enable_asr
+            else None
+        )
+        self.diarizer = (
+            create_diarizer(
+                config=DiarizerConfig(
+                    profile=self.config.diarization_profile,
+                    window_seconds=self.config.window_seconds,
+                    hop_seconds=self.config.hop_seconds,
+                    latency_seconds=self.config.latency_seconds,
+                    commit_delay_seconds=(
+                        self.config.commit_delay_seconds
+                        if self.config.commit_delay_seconds is not None
+                        else self.config.diarization_commit_delay_seconds
+                    ),
+                )
+            )
+            if self.config.enable_diarization
+            else None
         )
         self.corrector = NoOpCorrectionStage()
-        self.asr = self._create_asr()
+        self.asr = self._create_asr() if self.config.enable_asr else NullASR("ASR is disabled")
+        self._solo_segment_seq = 0
 
     def accept_chunk(self, chunk: PCMChunk) -> list[dict[str, Any]]:
         payloads: list[dict[str, Any]] = []
-        for event in self.mux.ingest_diarization_many(self.diarizer.accept(chunk)):
-            payloads.extend(self._serialize_transcript_event(event))
-
-        for utterance in self.segmenter.accept(chunk):
-            payloads.extend(self._transcribe_utterance(utterance))
+        if not self.config.enable_asr:
+            # Stream clock for the diarization-only view: lets the frontend
+            # advance timestamps even when no speaker is being detected.
+            payloads.append({"type": "tick", "time": chunk.end_time})
+        if self.diarizer is not None:
+            payloads.extend(self._handle_diarization_turns(self.diarizer.accept(chunk)))
+        if self.segmenter is not None:
+            for utterance in self.segmenter.accept(chunk):
+                payloads.extend(self._transcribe_utterance(utterance))
         return payloads
 
     def flush(self) -> list[dict[str, Any]]:
         payloads: list[dict[str, Any]] = []
-        for utterance in self.segmenter.flush():
-            payloads.extend(self._transcribe_utterance(utterance))
-        for event in self.mux.ingest_diarization_many(self.diarizer.flush()):
-            payloads.extend(self._serialize_transcript_event(event))
+        if self.segmenter is not None:
+            for utterance in self.segmenter.flush():
+                payloads.extend(self._transcribe_utterance(utterance))
+        if self.diarizer is not None:
+            payloads.extend(self._handle_diarization_turns(self.diarizer.flush()))
         return payloads
+
+    def _handle_diarization_turns(self, turns: list[Any]) -> list[dict[str, Any]]:
+        if self.config.enable_asr:
+            payloads: list[dict[str, Any]] = []
+            for event in self.mux.ingest_diarization_many(turns):
+                payloads.extend(self._serialize_transcript_event(event))
+            return payloads
+        # ponytail: ASR off — bypass the mux and emit speaker turns as text-less
+        # transcript events so the existing frontend renders the speaker timeline.
+        return [
+            {
+                "type": "transcript.final" if turn.final else "transcript.partial",
+                "source": "diarizer",
+                "segment_id": turn.turn_id,
+                "start": turn.start,
+                "end": turn.end,
+                "speaker": turn.speaker_id,
+                "text": "",
+                "final": turn.final,
+            }
+            for turn in turns
+        ]
 
     def _create_asr(self) -> FasterWhisperASR | NullASR:
         if not self.config.asr_model:
@@ -108,6 +146,25 @@ class StreamingPipeline:
         payloads: list[dict[str, Any]] = []
         for segment in asr_segments:
             if not segment.text:
+                continue
+            if not self.config.enable_diarization:
+                # ponytail: diarization off — bypass the mux (it would never
+                # commit without a diarization horizon) and finalize immediately.
+                self._solo_segment_seq += 1
+                payloads.append(
+                    {
+                        "type": "transcript.final",
+                        "source": "asr",
+                        "segment_id": f"seg_{self._solo_segment_seq:06d}",
+                        "start": segment.start,
+                        "end": segment.end,
+                        "speaker": None,
+                        "text": segment.text,
+                        "final": True,
+                        "words": [word.to_dict() for word in segment.words],
+                        "language": segment.language,
+                    }
+                )
                 continue
             for event in self.mux.ingest_asr(segment):
                 payloads.extend(self._serialize_transcript_event(event))
