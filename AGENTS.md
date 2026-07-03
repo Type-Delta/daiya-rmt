@@ -47,9 +47,10 @@ To address these challenges, we can consider the following approaches for each c
 4. **Context Awareness**: we can use small LLMs to verify and correct the transcription results based on the context and terminology provided by the user, plus summary of the current conversation direction, which can help improve the accuracy and relevance of the transcription, especially for technical conversations, or multi subject conversations where the subject can change frequently. Ideally, the LLM doesn't need to understand the full conversation, just the current direction of the conversation should be sufficient.
 5. **Real-time Streaming**: we can design split input audio into smaller segments (we could try Silero VAD for this) so we can stream output in segments instead of waiting for the whole conversation to be processed, and use a multiplexer to manage the flow of data between the Transcription Engine and the Speaker Diarization Engine, ensuring that output fragments from both components align correctly, and also handle follow-up corrections and context management to improve transcription accuracy over time.
 
-Before we can start designing the complete system, we need to answer the following questions:
+This research aims to answer the following questions:
 1. [x] Can we modify pyannote to retain speaker identification across multiple processing turns without compromising the accuracy? *Yes! We can and we don't need to modify pyannote*
-2. [ ] Can the fine-tuned Whisper model achieve the desired accuracy for Thai-English and Japanese-English mixed-lingual transcription? and if so which base model is the best for this?
-3. [ ] What is more efficient between using 2 vs 3 pass transcription, or is there a better way?
-4. [ ] What is the best LLM model for verifying and correcting transcription results, that is fast and accurate enough for this task?
-5. [ ] What is the best segment size for streaming transcription, that doesn't compromise the accuracy of Speaker Diarization while still providing low-latency transcription?
+2. [x] Can we make speaker diarization works in near-real-time? *Yes! We can but needs some more realworld testing*
+3. [x] Can the fine-tuned Whisper model achieve the desired accuracy for Thai-English and Japanese-English mixed-lingual transcription? and if so which base model is the best for this? *Yes! The fine-tuned Whisper model can achieve the desired accuracy*
+4. [ ] What is more efficient between using 2 vs 3 pass transcription, or is there a better way?
+5. [ ] What is the best LLM model for verifying and correcting transcription results, that is fast and accurate enough for this task?
+6. [ ] What is the best segment size for streaming transcription, that doesn't compromise the accuracy of Speaker Diarization while still providing low-latency transcription?
