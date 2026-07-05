@@ -183,6 +183,13 @@ def convert_to_ct2(
             force=force,
         )
 
+    # faster-whisper needs these next to model.bin; without tokenizer.json it falls back to a
+    # default whose token ids are shifted for large-v3 (task token becomes <|translate|>).
+    for name in ("tokenizer.json", "preprocessor_config.json"):
+        source = merged_model_dir / name
+        if source.exists():
+            shutil.copy2(source, output_dir / name)
+
     return output_dir
 
 

@@ -85,7 +85,20 @@ http://192.168.1.168:8000/
 Run the offline replay CLI:
 
 ```powershell
-uv run --package daiya web replay trainning\dataset\raw\whisper\Th-En_sample_02.mp3 --no-pace --json
+uv run --package daiya daiya trainning\dataset\raw\whisper\Th-En_sample_02.mp3 --no-pace --json
+```
+
+Run replay with the full workspace installed when you want the real lab pyannote
+diarization backend instead of the `UNKNOWN` fallback:
+
+```powershell
+uv run --all-packages daiya trainning\dataset\raw\whisper\Th-En_sample_02.mp3 `
+  --asr-model trainning\whisper\runs\medium-real-iter4-ct2-int8_float16 `
+  --device cuda `
+  --compute-type int8_float16 `
+  --language th `
+  --no-pace `
+  --json
 ```
 
 Useful CLI options:

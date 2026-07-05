@@ -69,8 +69,15 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--lora-target-modules", default="q_proj,v_proj")
     train_parser.add_argument("--fp16", action="store_true")
     train_parser.add_argument("--bf16", action="store_true")
+    train_parser.add_argument("--load-in-4bit", action="store_true")
+    train_parser.add_argument("--load-in-8bit", action="store_true")
     train_parser.add_argument("--gradient-checkpointing", action="store_true")
     train_parser.add_argument("--load-best-model-at-end", action="store_true")
+    train_parser.add_argument(
+        "--resume-from-checkpoint",
+        action="store_true",
+        help="Resume from the latest checkpoint in --output-dir.",
+    )
     train_parser.add_argument("--push-to-hub", action="store_true")
     train_parser.add_argument("--hub-model-id", default=None)
 
@@ -152,8 +159,11 @@ def config_from_args(args: argparse.Namespace) -> TrainingConfig:
         ),
         fp16=args.fp16,
         bf16=args.bf16,
+        load_in_4bit=args.load_in_4bit,
+        load_in_8bit=args.load_in_8bit,
         gradient_checkpointing=args.gradient_checkpointing,
         load_best_model_at_end=args.load_best_model_at_end,
+        resume_from_checkpoint=args.resume_from_checkpoint,
         push_to_hub=args.push_to_hub,
         hub_model_id=args.hub_model_id,
     )

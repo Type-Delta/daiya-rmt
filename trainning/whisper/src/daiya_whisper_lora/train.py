@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import inspect
+import sys
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,9 +11,10 @@ from typing import Any
 import evaluate
 import torch
 from datasets import Audio, Dataset, DatasetDict, load_dataset
-from peft import LoraConfig, get_peft_model
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from rich.console import Console
 from transformers import (
+    BitsAndBytesConfig,
     Seq2SeqTrainer,
     Seq2SeqTrainingArguments,
     WhisperForConditionalGeneration,
@@ -76,8 +78,11 @@ class TrainingConfig:
     lora_target_modules: tuple[str, ...] = ("q_proj", "v_proj")
     fp16: bool = False
     bf16: bool = False
+    load_in_4bit: bool = False
+    load_in_8bit: bool = False
     gradient_checkpointing: bool = False
     load_best_model_at_end: bool = False
+    resume_from_checkpoint: bool = False
     push_to_hub: bool = False
     hub_model_id: str | None = None
 
@@ -126,7 +131,43 @@ def safe_for_console(value: Any) -> str:
     return text.encode(encoding, errors="backslashreplace").decode(encoding)
 
 
+_power_request_handle = None
+
+
+def keep_system_awake() -> None:
+    # Modern Standby ignores SetThreadExecutionState (see
+    # docs/2026-07-04-overnight-training-kill-report.md); an ExecutionRequired power request is
+    # the only API that keeps this process running through standby on this platform.
+    if sys.platform != "win32":
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    class ReasonContext(ctypes.Structure):
+        _fields_ = [
+            ("Version", wintypes.ULONG),
+            ("Flags", wintypes.DWORD),
+            ("SimpleReasonString", wintypes.LPWSTR),
+        ]
+
+    POWER_REQUEST_CONTEXT_SIMPLE_STRING = 0x1
+    POWER_REQUEST_SYSTEM_REQUIRED = 1
+    POWER_REQUEST_EXECUTION_REQUIRED = 3
+
+    context = ReasonContext(0, POWER_REQUEST_CONTEXT_SIMPLE_STRING, "daiya whisper LoRA training")
+    handle = ctypes.windll.kernel32.PowerCreateRequest(ctypes.byref(context))
+    if handle and handle != -1:
+        ctypes.windll.kernel32.PowerSetRequest(handle, POWER_REQUEST_SYSTEM_REQUIRED)
+        ctypes.windll.kernel32.PowerSetRequest(handle, POWER_REQUEST_EXECUTION_REQUIRED)
+        global _power_request_handle  # keep handle alive for the process lifetime
+        _power_request_handle = handle
+
+    ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+    ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
+
+
 def train(config: TrainingConfig) -> None:
+    keep_system_awake()
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
     processor = load_processor(config)
@@ -160,7 +201,7 @@ def train(config: TrainingConfig) -> None:
         ),
     )
 
-    trainer.train()
+    trainer.train(resume_from_checkpoint=config.resume_from_checkpoint or None)
     trainer.save_model(str(config.output_dir))
     processor.save_pretrained(str(config.output_dir))
 
@@ -251,16 +292,24 @@ def prepare_dataset(config: TrainingConfig, processor: WhisperProcessor) -> Data
         example["labels"] = processor.tokenizer(example["text"]).input_ids
         return example
 
+    # ponytail: disk-backed feature cache; in-memory map holds ~8GB of mels and OOMs the box
+    cache_dir = config.output_dir.parent / "feature_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
     dataset = dataset.map(
         prepare_example,
         remove_columns=list(columns_to_remove | {"audio", "text"}),
         num_proc=config.preprocessing_num_proc,
         desc="Preparing Whisper features",
+        cache_file_names={split: str(cache_dir / f"{split}.arrow") for split in dataset},
+        writer_batch_size=32,
     )
 
     dataset = dataset.filter(
         lambda example: 0 < len(example["labels"]) <= config.max_label_length,
         desc="Filtering label length",
+        cache_file_names={split: str(cache_dir / f"{split}.filtered.arrow") for split in dataset},
+        writer_batch_size=32,
     )
 
     return dataset
@@ -295,6 +344,8 @@ def build_training_args(config: TrainingConfig) -> Seq2SeqTrainingArguments:
         "num_train_epochs": config.num_train_epochs,
         "max_steps": config.max_steps,
         "gradient_checkpointing": config.gradient_checkpointing,
+        # non-reentrant so checkpointed encoder blocks still get LoRA grads
+        "gradient_checkpointing_kwargs": {"use_reentrant": False},
         "fp16": config.fp16,
         "bf16": config.bf16,
         "eval_steps": config.eval_steps,
@@ -350,7 +401,24 @@ def build_trainer_kwargs(
 
 
 def load_lora_model(config: TrainingConfig) -> WhisperForConditionalGeneration:
-    model = WhisperForConditionalGeneration.from_pretrained(config.model_name_or_path)
+    model_kwargs: dict[str, Any] = {}
+    if config.load_in_4bit:
+        model_kwargs["quantization_config"] = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16 if config.bf16 else torch.float16,
+            bnb_4bit_use_double_quant=True,
+        )
+        model_kwargs["device_map"] = "auto"
+    elif config.load_in_8bit:
+        model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+        model_kwargs["device_map"] = "auto"
+
+    model = WhisperForConditionalGeneration.from_pretrained(config.model_name_or_path, **model_kwargs)
+    if config.load_in_4bit or config.load_in_8bit:
+        model = prepare_model_for_kbit_training(
+            model, use_gradient_checkpointing=config.gradient_checkpointing
+        )
     model.config.use_cache = False
     model.generation_config.task = config.task
     if config.language_policy == "global" and config.language:
