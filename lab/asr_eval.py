@@ -21,7 +21,7 @@ from typing import Any, Iterable
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_DATASET_DIR = REPO_ROOT / "trainning" / "dataset" / "hf_datasets" / "whisper"
+DEFAULT_DATASET_DIR = REPO_ROOT / "training" / "dataset" / "hf_datasets" / "whisper"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "lab" / "artifacts" / "asr_eval"
 
 

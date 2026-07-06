@@ -5,7 +5,7 @@ This processor turns a raw audio folder into a HuggingFace `audiofolder` dataset
 ## Setup
 
 ```powershell
-cd C:\JokaMain\ProjectShowRoom\daiya-rmt\trainning\processor\whisper
+cd C:\JokaMain\ProjectShowRoom\daiya-rmt\training\processor\whisper
 uv sync
 Copy-Item .env.example .env
 ```

@@ -10,6 +10,6 @@ dependencies = []
 members = [
    "daiya",
    "lab/statefull-diarization",
-   "trainning/processor/whisper",
-   "trainning/whisper",
+   "training/processor/whisper",
+   "training/whisper",
 ]

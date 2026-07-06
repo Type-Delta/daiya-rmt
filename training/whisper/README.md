@@ -3,7 +3,7 @@
 Fine-tunes `openai/whisper-medium` with LoRA using the local Daiya Hugging Face `audiofolder` dataset at:
 
 ```text
-trainning/dataset/hf_datasets/whisper
+training/dataset/hf_datasets/whisper
 ```
 
 The project is a `uv` workspace member and uses the root workspace `.venv`, matching the dataset processor layout.
@@ -12,22 +12,22 @@ The project is a `uv` workspace member and uses the root workspace `.venv`, matc
 
 ```powershell
 cd C:\JokaMain\ProjectShowRoom\daiya-rmt
-uv sync --project trainning/whisper
+uv sync --project training/whisper
 ```
 
-This project pins CUDA PyTorch wheels through the same `pytorch-cu128` uv index used by the dataset processor. If your driver cannot run CUDA 12.8 wheels, change the `[[tool.uv.index]]` URL in `trainning/whisper/pyproject.toml` before syncing.
+This project pins CUDA PyTorch wheels through the same `pytorch-cu128` uv index used by the dataset processor. If your driver cannot run CUDA 12.8 wheels, change the `[[tool.uv.index]]` URL in `training/whisper/pyproject.toml` before syncing.
 
 ## Inspect Dataset
 
 ```powershell
-uv run --project trainning/whisper daiya-whisper-lora inspect
+uv run --project training/whisper daiya-whisper-lora inspect
 ```
 
 ## Train
 
 ```powershell
-uv run --project trainning/whisper daiya-whisper-lora train `
-  --output-dir trainning/whisper/runs/whisper-medium-lora `
+uv run --project training/whisper daiya-whisper-lora train `
+  --output-dir training/whisper/runs/whisper-medium-lora `
   --num-train-epochs 3 `
   --per-device-train-batch-size 4 `
   --gradient-accumulation-steps 4 `
@@ -37,7 +37,7 @@ uv run --project trainning/whisper daiya-whisper-lora train `
 
 Defaults:
 
-- dataset: `trainning/dataset/hf_datasets/whisper`
+- dataset: `training/dataset/hf_datasets/whisper`
 - base model: `openai/whisper-medium`
 - LoRA target modules: `q_proj,v_proj`
 - validation split: created from training data with `--validation-size 0.05` when no validation split exists
@@ -56,11 +56,11 @@ The dataset loader reads all metadata columns so language can condition label to
 Use `--max-train-samples` and `--max-eval-samples` for smoke runs:
 
 ```powershell
-uv run --project trainning/whisper daiya-whisper-lora train `
+uv run --project training/whisper daiya-whisper-lora train `
   --max-train-samples 8 `
   --max-eval-samples 4 `
   --max-steps 1 `
-  --output-dir trainning/whisper/runs/smoke
+  --output-dir training/whisper/runs/smoke
 ```
 
 ## Output

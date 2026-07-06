@@ -2,7 +2,7 @@
 
 This document is the agreed plan for the first end-to-end prototype: combine
 the realtime stateful diarization lab (`lab/statefull-diarization`) with the
-fine-tuned Whisper LoRA (`trainning/whisper/runs/medium-real-iter4`) into a
+fine-tuned Whisper LoRA (`training/whisper/runs/medium-real-iter4`) into a
 working app containing all four architecture components from `AGENTS.md`.
 
 The v0 goal is a **real-world testing ground**: a web app that streams live
@@ -15,8 +15,8 @@ realtime behavior can be tested reproducibly without a live conversation.
 | Decision | Choice |
 |---|---|
 | LLM correction pass (pass 3) | **Not in v0-Prototype.** Pipeline keeps a no-op correction stage so the LLM slots in later as a drop-in. |
-| ASR runtime | **Merge LoRA into base, convert to CTranslate2, serve with faster-whisper.** Merge/convert script lives in `trainning/whisper` so future adapters convert the same way. Gate: WER sanity check vs the PEFT model. |
-| LoRA checkpoint | `trainning/whisper/runs/medium-real-iter4` |
+| ASR runtime | **Merge LoRA into base, convert to CTranslate2, serve with faster-whisper.** Merge/convert script lives in `training/whisper` so future adapters convert the same way. Gate: WER sanity check vs the PEFT model. |
+| LoRA checkpoint | `training/whisper/runs/medium-real-iter4` |
 | Live audio input | **Both**: browser mic → WebSocket, and server-side capture (mic + desktop/loopback via the existing sounddevice code). |
 | Frontend | **Vite + React** app — the frontend is not throwaway; it will grow tuning knobs and diagnostics. Tailwind CSS + Phosphor icons, **no UI component library** (hand-rolled components). |
 | Server console in UI | The frontend streams the server's console/log output live (a `log` event stream over WebSocket), so tuning sessions don't need a terminal next to the phone. |
@@ -39,7 +39,7 @@ daiya/                      # new uv workspace member: the product (lab/ stays a
     correct.py              # no-op correction stage (future LLM pass)
     server.py               # FastAPI: WS /stream, replay + capture endpoints, serves web build
   web/                      # Vite + React frontend (built output served by FastAPI)
-trainning/whisper/
+training/whisper/
   src/daiya_whisper_lora/merge.py   # new CLI subcommand: merge → CT2 convert → WER check
 ```
 
@@ -76,7 +76,7 @@ architecture; pass 3 later becomes just another producer of
 
 Each phase is independently runnable/testable.
 
-1. **Merge + convert tooling** (`trainning/whisper`): new `merge` subcommand —
+1. **Merge + convert tooling** (`training/whisper`): new `merge` subcommand —
    merge iter4 adapter into `openai/whisper-medium`, convert to CT2, run WER
    on a held-out dataset slice comparing merged-CT2 vs PEFT.
    *Gate: merged WER within ~1 % absolute of PEFT; otherwise fall back to the

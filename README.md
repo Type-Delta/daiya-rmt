@@ -8,8 +8,8 @@ The project uses a root `uv` workspace. Run commands from the repository root un
 
 - `daiya/` - v0 transcription prototype: FastAPI backend, CLI replay tool, and React web UI.
 - `daiya/web/` - Vite/React frontend served by the backend after `npm run build`.
-- `trainning/whisper/` - Whisper LoRA fine-tuning and merge-to-CTranslate2 tooling.
-- `trainning/processor/whisper/` - raw audio to Hugging Face `audiofolder` dataset pipeline.
+- `training/whisper/` - Whisper LoRA fine-tuning and merge-to-CTranslate2 tooling.
+- `training/processor/whisper/` - raw audio to Hugging Face `audiofolder` dataset pipeline.
 - `lab/statefull-diarization/` - throwaway pyannote speaker-memory diarization demo.
 - `docs/` - design and implementation plans.
 
@@ -85,15 +85,15 @@ http://192.168.1.168:8000/
 Run the offline replay CLI:
 
 ```powershell
-uv run --package daiya daiya trainning\dataset\raw\whisper\Th-En_sample_02.mp3 --no-pace --json
+uv run --package daiya daiya training\dataset\raw\whisper\Th-En_sample_02.mp3 --no-pace --json
 ```
 
 Run replay with the full workspace installed when you want the real lab pyannote
 diarization backend instead of the `UNKNOWN` fallback:
 
 ```powershell
-uv run --all-packages daiya trainning\dataset\raw\whisper\Th-En_sample_02.mp3 `
-  --asr-model trainning\whisper\runs\medium-real-iter4-ct2-int8_float16 `
+uv run --all-packages daiya training\dataset\raw\whisper\Th-En_sample_02.mp3 `
+  --asr-model training\whisper\runs\medium-real-iter4-ct2-int8_float16 `
   --device cuda `
   --compute-type int8_float16 `
   --language th `
@@ -117,13 +117,13 @@ Useful CLI options:
 The v0 backend uses faster-whisper. Model selection is resolved in this order:
 
 1. `DAIYA_ASR_MODEL`
-2. local converted CT2 model at `trainning\whisper\runs\medium-real-iter4-ct2-int8_float16`
+2. local converted CT2 model at `training\whisper\runs\medium-real-iter4-ct2-int8_float16`
 3. fallback model name `medium`
 
 Other environment knobs:
 
 ```powershell
-$env:DAIYA_ASR_MODEL='trainning\whisper\runs\medium-real-iter4-ct2-int8_float16'
+$env:DAIYA_ASR_MODEL='training\whisper\runs\medium-real-iter4-ct2-int8_float16'
 $env:DAIYA_ASR_DEVICE='auto'
 $env:DAIYA_ASR_COMPUTE_TYPE='int8_float16'
 $env:DAIYA_ASR_LANGUAGE=''
@@ -149,7 +149,7 @@ Train a LoRA adapter:
 
 ```powershell
 uv run --package daiya-whisper-lora daiya-whisper-lora train `
-  --output-dir trainning\whisper\runs\whisper-medium-lora `
+  --output-dir training\whisper\runs\whisper-medium-lora `
   --num-train-epochs 3 `
   --per-device-train-batch-size 4 `
   --gradient-accumulation-steps 4 `
@@ -161,8 +161,8 @@ Merge the trained adapter and convert it to CTranslate2:
 
 ```powershell
 uv run --package daiya-whisper-lora daiya-whisper-lora merge `
-  --adapter-path trainning\whisper\runs\medium-real-iter4 `
-  --ct2-output-dir trainning\whisper\runs\medium-real-iter4-ct2-int8_float16 `
+  --adapter-path training\whisper\runs\medium-real-iter4 `
+  --ct2-output-dir training\whisper\runs\medium-real-iter4-ct2-int8_float16 `
   --quantization int8_float16
 ```
 
@@ -170,8 +170,8 @@ Skip the WER gate when you only need a serving artifact quickly:
 
 ```powershell
 uv run --package daiya-whisper-lora daiya-whisper-lora merge `
-  --adapter-path trainning\whisper\runs\medium-real-iter4 `
-  --ct2-output-dir trainning\whisper\runs\medium-real-iter4-ct2-int8_float16 `
+  --adapter-path training\whisper\runs\medium-real-iter4 `
+  --ct2-output-dir training\whisper\runs\medium-real-iter4-ct2-int8_float16 `
   --quantization int8_float16 `
   --skip-wer
 ```
@@ -179,7 +179,7 @@ uv run --package daiya-whisper-lora daiya-whisper-lora merge `
 The converted serving model should contain:
 
 ```text
-trainning\whisper\runs\medium-real-iter4-ct2-int8_float16\model.bin
+training\whisper\runs\medium-real-iter4-ct2-int8_float16\model.bin
 ```
 
 ## Dataset Pipeline Commands
@@ -198,7 +198,7 @@ uv run --package whisper-dataset-pipeline daiya-audio-label `
   --output-dir C:\datasets\daiya_hf
 ```
 
-Required configuration is normally placed in `trainning\processor\whisper\.env`. Important values include `DAIYA_INPUT_DIR`, `DAIYA_OUTPUT_DIR`, `OPENROUTER_API_KEY`, model choices, and optionally `DAIYA_FFMPEG_BIN`.
+Required configuration is normally placed in `training\processor\whisper\.env`. Important values include `DAIYA_INPUT_DIR`, `DAIYA_OUTPUT_DIR`, `OPENROUTER_API_KEY`, model choices, and optionally `DAIYA_FFMPEG_BIN`.
 
 ## Diarization Lab Commands
 
@@ -264,9 +264,9 @@ uv run --package daiya web-build
 
 ## Useful Paths
 
-- Raw sample audio: `trainning\dataset\raw\whisper`
-- Whisper HF dataset: `trainning\dataset\hf_datasets\whisper`
-- LoRA adapter runs: `trainning\whisper\runs`
-- Default CT2 ASR model: `trainning\whisper\runs\medium-real-iter4-ct2-int8_float16`
+- Raw sample audio: `training\dataset\raw\whisper`
+- Whisper HF dataset: `training\dataset\hf_datasets\whisper`
+- LoRA adapter runs: `training\whisper\runs`
+- Default CT2 ASR model: `training\whisper\runs\medium-real-iter4-ct2-int8_float16`
 - Web build output: `daiya\web\dist`
 - Design plan: `docs\v0-prototype-plan.md`

@@ -49,7 +49,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--audio",
         nargs="+",
-        default=["../../trainning/resources/Th-En_sample_02.mp3"],
+        default=["../../training/resources/Th-En_sample_02.mp3"],
         help="Audio file(s) to benchmark.",
     )
     parser.add_argument(
