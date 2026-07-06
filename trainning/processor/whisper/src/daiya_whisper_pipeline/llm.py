@@ -20,15 +20,41 @@ Return only compact JSON with keys: text, language, notes, context.
 
 Rules:
 - Preserve the speaker's meaning and language switching.
+- Transcribe the words actually spoken. Never paraphrase, summarize, or substitute synonyms.
+- Do not expand abbreviations or complete clipped words — write exactly the form spoken, even if a longer form seems more correct.
+- The preceding-chunk transcript is context only, not part of this chunk. Transcribe exactly what is audible in this chunk's audio — including words that happen to repeat the previous chunk's ending — but never fill gaps with the previous transcript's words.
+- Produce a clean read: drop stutters, filler repetitions ("พอ พอ พอ" -> "พอ"), and abandoned false starts; when the speaker corrects themself mid-word or mid-sentence, keep only the corrected version.
+- Collapse immediately-doubled hesitation words and phrases ("ที่ที่" -> "ที่", "ในใน" -> "ใน"). Repeated connector or function words are always hesitation — collapse to one occurrence. Repeated content words may be deliberate emphasis — keep those only when clearly intentional. Apply all cleanup rules in the text field itself — never just describe the issue in notes.
+- Do not drop intentional repetition that carries meaning or emphasis.
+- The audio may contain multiple speakers taking turns; transcribe all speech in order. Do not attribute or label speakers.
 - Keep real English technical words in English instead of spelling them phonetically in Thai or Japanese.
 - Normalize punctuation and spacing.
-- Do not translate Thai, Japanese, or English.
+- Write Thai as continuous text with spaces only at natural phrase or sentence boundaries. Never separate individual Thai words with spaces.
+- Do not translate anything, keep all text in the original language(s) spoken.
 - Do not invent content that is not supported by the audio.
 - If the speech is unintelligible, leave text empty and explain briefly in notes.
 - Use the current source-file context only as a hint for ambiguous advanced terms, names, acronyms, tools, and topic direction.
 - Return context as the full updated source-file context for later chunks.
 - Keep context concise: source-specific terminology, names, acronyms, topic direction, and spelling hints.
+- In context, maintain a line starting with "Terms:" for cross-chunk consistency. Admit a term ONLY if it is specific (product names, system/acronym names, people, project-specific jargon) AND you are completely certain you heard it correctly. Never add generic words, and never add anything you might have misheard — a wrong term poisons every later chunk. Keep the list short; drop entries that turn out to be wrong.
 - Do not include transcript text verbatim in context unless it is a term or short phrase worth preserving.
+
+Examples of the required transcript style:
+
+1. Disfluent speech (heard): "แล้วก็ แล้วก็ เรา เราจะ จะไปที่ ไปที่ออฟฟิศ อ่ะไม่ใช่ ไปที่ไซต์งานก่อนครับ"
+   Correct text: "แล้วก็เราจะไปที่ไซต์งานก่อนครับ"
+   (stutters and the abandoned "ออฟฟิศ" false start removed; only the corrected destination kept)
+
+2. Word-by-word spaced Thai is wrong:
+   Wrong: "เรา ใช้ ระบบ CI CD บน GitHub Actions ครับ"
+   Correct: "เราใช้ระบบ CI/CD บน GitHub Actions ครับ"
+   (Thai written continuously; English technical terms kept in English)
+
+3. Intentional repetition kept, with a Terms line in context:
+   Heard: "ดีมาก ดีมาก อ่า Deploy ตัว Daiya ขึ้น staging ได้เลย"
+   Correct text: "ดีมาก ดีมาก อ่า Deploy ตัว Daiya ขึ้น staging ได้เลย"
+   Context: "Topic: deploying the Daiya project. Terms: Daiya, staging, deploy"
+   ("ดีมาก ดีมาก" is deliberate emphasis, not a stutter, so it stays)
 """
 
 
@@ -66,19 +92,34 @@ class OpenRouterAudioTranscriber:
             },
         )
 
-    def transcribe(self, chunk: Chunk, context: TranscriptionContext | None = None) -> LabeledChunk:
+    def transcribe(
+        self,
+        chunk: Chunk,
+        context: TranscriptionContext | None = None,
+        previous_text: str = "",
+    ) -> LabeledChunk:
         if not self.config.openrouter_api_key:
             raise RuntimeError("OPENROUTER_API_KEY is required for audio LLM transcription")
 
         context_text = (context.text if context else "").strip()
+        previous_tail = previous_text.strip()[-600:]
         user_text = (
             "Transcribe this audio chunk for a mixed Thai-English or Japanese-English dataset. "
-            "Return the best verbatim transcript suitable for model training.\n\n"
+            "Return a clean transcript suitable for model training: accurate to the audio, but with "
+            "stutters, filler repetitions, and abandoned false starts removed.\n\n"
+            f"Transcript of the immediately preceding chunk (continuity hint, do not repeat it):\n"
+            f"{previous_tail or '(start of file)'}\n\n"
             f"Current source-file context:\n{context_text or '(none yet)'}"
         )
+        extra_body: dict[str, object] = {}
+        if self.config.llm_reasoning_effort:
+            extra_body["reasoning"] = {"effort": self.config.llm_reasoning_effort}
         response = self.client.chat.completions.create(
             model=self.config.openrouter_model,
             temperature=self.config.llm_temperature,
+            # cost fuse: transcripts are ~100 tokens; caps runaway thinking on reasoning models
+            max_tokens=2000,
+            extra_body=extra_body,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {
@@ -130,7 +171,8 @@ def _transcribe_source_chunks(
     context = TranscriptionContext()
     labeled: list[LabeledChunk] = []
     for chunk in sorted(chunks, key=lambda item: item.index):
-        item = transcriber.transcribe(chunk, context)
+        previous_text = labeled[-1].transcript_text if labeled else ""
+        item = transcriber.transcribe(chunk, context, previous_text=previous_text)
         context = _next_context(context, item, config.llm_context_max_chars)
         item.extra["context_after"] = context.text
         labeled.append(item)

@@ -208,7 +208,7 @@ def default_asr_model() -> str:
     if configured:
         return configured
 
-    local_ct2 = _repo_root() / "trainning" / "whisper" / "runs" / "medium-real-iter4-ct2-int8_float16"
+    local_ct2 = _repo_root() / "trainning" / "whisper" / "runs" / "largev3-m2-iter1-ct2-int8_float16"
     if (local_ct2 / "model.bin").exists():
         return str(local_ct2)
 

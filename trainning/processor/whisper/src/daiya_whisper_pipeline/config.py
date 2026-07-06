@@ -79,6 +79,7 @@ class PipelineConfig:
     llm_timeout_seconds: float
     llm_audio_format: str
     llm_context_max_chars: int
+    llm_reasoning_effort: str
 
     language_hint: str
     text_column: str
@@ -124,6 +125,8 @@ class PipelineConfig:
             llm_timeout_seconds=_float("DAIYA_LLM_TIMEOUT_SECONDS", 120.0),
             llm_audio_format=_str("DAIYA_LLM_AUDIO_FORMAT", "wav"),
             llm_context_max_chars=_int("DAIYA_LLM_CONTEXT_MAX_CHARS", 3000),
+            # reasoning-model thinking adds cost without ASR accuracy gains; "" = don't send
+            llm_reasoning_effort=_str("DAIYA_LLM_REASONING_EFFORT", ""),
             language_hint=_str("DAIYA_LANGUAGE_HINT", "mixed"),
             text_column=_str("DAIYA_TEXT_COLUMN", "text"),
             keep_intermediate=_bool(os.getenv("DAIYA_KEEP_INTERMEDIATE"), False),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -159,6 +160,11 @@ class FasterWhisperASR:
             initial_prompt=initial_prompt or self.initial_prompt,
             word_timestamps=True,
             vad_filter=False,
+            # ponytail: sparse temperature ladder instead of the default 6-rung one.
+            # Degenerate greedy loops on short utterances need temp ~0.8 to recover;
+            # the intermediate rungs (0.2-0.6) never rescue, they just add full decode
+            # passes (~16s stall on a 1s clip). Normal clips never leave temp 0.
+            temperature=[0.0, 0.8, 1.0],
         )
         return list(_convert_fw_segments(segments, offset=utterance.start))
 
@@ -174,11 +180,25 @@ class NullASR:
         raise ASRUnavailableError(self.reason)
 
 
+_THAI_GAP = re.compile(r"(?<=[฀-๿]) +(?=[฀-๿])")
+
+
+def normalize_thai_spacing(text: str) -> str:
+    """Collapse word-by-word spaced Thai (a fine-tune label artifact); keep normal phrase spacing."""
+    thai_chars = sum("฀" <= ch <= "๿" for ch in text)
+    if thai_chars < 10:
+        return text
+    gaps = len(_THAI_GAP.findall(text))
+    if gaps / thai_chars <= 0.12:
+        return text
+    return _THAI_GAP.sub("", text)
+
+
 def _convert_fw_segments(segments: Iterable[object], *, offset: float) -> Iterable[ASRSegment]:
     for segment in segments:
         start = offset + float(getattr(segment, "start", 0.0))
         end = offset + float(getattr(segment, "end", 0.0))
-        text = str(getattr(segment, "text", "")).strip()
+        text = normalize_thai_spacing(str(getattr(segment, "text", "")).strip())
         words = []
         for word in getattr(segment, "words", None) or []:
             words.append(
