@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CaretDown,
   CaretUp,
+  DownloadSimple,
   FileAudio,
   HardDrives,
   Microphone,
@@ -59,6 +60,35 @@ function fmtTime(s: number): string {
   const m = Math.floor(s / 60);
   const sec = s - m * 60;
   return `${m}:${sec < 10 ? '0' : ''}${sec.toFixed(1)}`;
+}
+
+// ---- SRT export ------------------------------------------------------------
+
+function srtTime(s: number): string {
+  const ms = Math.max(0, Math.round(s * 1000));
+  const pad = (n: number, w = 2) => String(n).padStart(w, '0');
+  return `${pad(Math.floor(ms / 3600000))}:${pad(Math.floor(ms / 60000) % 60)}:${pad(Math.floor(ms / 1000) % 60)},${pad(ms % 1000, 3)}`;
+}
+
+function toSrt(segments: Segment[]): string {
+  return (
+    segments
+      .filter((s) => s.text.trim())
+      .map((s, i) => {
+        const label = s.speaker ? `${s.speaker}: ` : '';
+        return `${i + 1}\n${srtTime(s.start)} --> ${srtTime(s.end)}\n${label}${s.text.trim()}`;
+      })
+      .join('\n\n') + '\n'
+  );
+}
+
+function downloadSrt(segments: Segment[]): void {
+  const url = URL.createObjectURL(new Blob([toSrt(segments)], { type: 'text/plain;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `daiya-transcript-${Date.now()}.srt`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ---- transcript state ------------------------------------------------------
@@ -695,6 +725,62 @@ function ConsoleDrawer({
   );
 }
 
+function ConfirmDialog({
+  title,
+  message,
+  confirmLabel,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    confirmRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onCancel();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onCancel]);
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50" onClick={onCancel} />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-title"
+        className="relative w-full max-w-sm rounded-lg border border-edge bg-surface p-5 shadow-xl"
+      >
+        <h2 id="confirm-title" className="text-sm font-semibold">
+          {title}
+        </h2>
+        <p className="mt-2 text-sm text-muted">{message}</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className={`h-9 rounded-md border border-edge bg-raised px-4 text-sm font-medium text-ink transition-colors duration-150 hover:border-primary ${FOCUS_RING}`}
+          >
+            Cancel
+          </button>
+          <button
+            ref={confirmRef}
+            type="button"
+            onClick={onConfirm}
+            className={`h-9 rounded-md bg-primary px-4 text-sm font-semibold text-primary-ink transition-opacity duration-150 hover:opacity-90 ${FOCUS_RING}`}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---- app ----------------------------------------------------------------------
 
 export default function App() {
@@ -704,6 +790,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [applied, setApplied] = useState(false);
+  const [confirmStart, setConfirmStart] = useState(false);
 
   const { lines, push, clear } = useConsole(consoleOpen);
   const { status, error, dismissError, segments, clock, diarOnly, start, stop, pushSettings } = useSession(push);
@@ -714,6 +801,14 @@ export default function App() {
       setApplied(true);
       window.setTimeout(() => setApplied(false), 1500);
     }
+  };
+
+  const handleStart = () => {
+    if (segments.length > 0) {
+      setConfirmStart(true);
+      return;
+    }
+    start(source, settings, file);
   };
 
   useEffect(() => {
@@ -783,6 +878,16 @@ export default function App() {
           </label>
         )}
         <div className="flex-1" />
+        <button
+          type="button"
+          onClick={() => downloadSrt(segments)}
+          disabled={segments.length === 0}
+          title={segments.length === 0 ? 'Nothing to export yet' : 'Export transcript as SRT'}
+          className={`flex h-9 items-center gap-2 rounded-md border border-edge bg-surface px-3 text-sm text-muted transition-colors duration-150 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 ${FOCUS_RING}`}
+        >
+          <DownloadSimple size={15} aria-hidden />
+          SRT
+        </button>
         {running ? (
           <button
             type="button"
@@ -795,7 +900,7 @@ export default function App() {
         ) : (
           <button
             type="button"
-            onClick={() => start(source, settings, file)}
+            onClick={handleStart}
             disabled={(source === 'replay' && !file) || (!settings.enable_asr && !settings.enable_diarization)}
             title={
               !settings.enable_asr && !settings.enable_diarization
@@ -845,6 +950,19 @@ export default function App() {
             />
           </div>
         </div>
+      )}
+
+      {confirmStart && (
+        <ConfirmDialog
+          title="Clear current transcript?"
+          message="Starting a new session will clear the transcript shown here. Export it as SRT first if you want to keep it."
+          confirmLabel="Start new session"
+          onConfirm={() => {
+            setConfirmStart(false);
+            start(source, settings, file);
+          }}
+          onCancel={() => setConfirmStart(false)}
+        />
       )}
 
       <ConsoleDrawer open={consoleOpen} onToggle={() => setConsoleOpen((v) => !v)} lines={lines} onClear={clear} />
