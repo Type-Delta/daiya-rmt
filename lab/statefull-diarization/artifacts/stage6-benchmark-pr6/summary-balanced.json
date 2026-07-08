@@ -1,0 +1,37 @@
+[
+  {
+    "audio": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\resources\\Th-En_sample_02.mp3",
+    "duration_seconds": 180.0,
+    "sample_rate": 16000,
+    "profile": "balanced",
+    "config": {
+      "window_seconds": 10.0,
+      "hop_seconds": 1.0,
+      "latency_seconds": 3.0,
+      "commit_delay_seconds": 5.0
+    },
+    "offline_reference_runtime_seconds": 7.0115866999999525,
+    "reference_rttm": "artifacts\\stage6-benchmark-pr6\\Th-En_sample_02-balanced-offline-reference.rttm",
+    "backends": [
+      {
+        "backend": "daiya",
+        "status": "ok",
+        "error": null,
+        "runtime_seconds": 12.487778200000093,
+        "audio_duration_seconds": 180.0,
+        "realtime_factor": 0.06937654555555607,
+        "der": 0.3062026542012249,
+        "num_reference_speakers": 3,
+        "num_hypothesis_speakers": 11,
+        "num_reference_turns": 51,
+        "num_hypothesis_turns": 40,
+        "speaker_flips": 9,
+        "corrections": 9,
+        "p50_pipeline_runtime_seconds": 0.07232299999986935,
+        "p95_pipeline_runtime_seconds": 0.07492700000000241,
+        "p50_emit_latency_seconds": 2.0,
+        "p95_emit_latency_seconds": 2.0
+      }
+    ]
+  }
+]

@@ -32,6 +32,7 @@ export interface Word {
   start: number;
   end: number;
   confidence?: number;
+  speaker?: string | null;
 }
 
 export interface Segment {

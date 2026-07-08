@@ -12,9 +12,14 @@ class WordTimestamp:
     start: float
     end: float
     probability: float | None = None
+    speaker_id: str | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return asdict(self)
+        data = asdict(self)
+        speaker_id = data.pop("speaker_id")
+        if speaker_id is not None:
+            data["speaker"] = speaker_id
+        return data
 
 
 @dataclass(frozen=True)
@@ -56,6 +61,7 @@ class TranscriptSegment:
     def to_dict(self) -> dict[str, object]:
         data = asdict(self)
         data["speaker"] = data.pop("speaker_id")
+        data["words"] = [word.to_dict() for word in self.words]
         return data
 
 
@@ -94,6 +100,8 @@ class TranscriptMultiplexer:
     """Assigns ASR segments to speaker turns and emits transcript wire events."""
 
     unknown_speaker: str = "UNKNOWN"
+    min_word_overlap_seconds: float = 0.02
+    nearest_turn_collar_seconds: float = 0.12
     _next_segment: int = 0
     _segments: dict[str, TranscriptSegment] = field(default_factory=dict)
     _provisional_turns: dict[str, DiarizationTurn] = field(default_factory=dict)
@@ -105,14 +113,16 @@ class TranscriptMultiplexer:
 
     def ingest_asr(self, segment: ASRSegment) -> list[TranscriptEvent]:
         segment_id = self._new_segment_id()
-        speaker_id = self._speaker_for(segment.start, segment.end, self._provisional_turns.values())
+        turns = tuple(self._provisional_turns.values())
+        words = self._assign_word_speakers(segment.words, turns)
+        speaker_id = self._speaker_for_segment(segment.start, segment.end, words, turns)
         transcript = TranscriptSegment(
             segment_id=segment_id,
             start=segment.start,
             end=segment.end,
             text=segment.text,
             speaker_id=speaker_id,
-            words=segment.words,
+            words=words,
             language=segment.language,
         )
         self._segments[segment_id] = transcript
@@ -141,11 +151,22 @@ class TranscriptMultiplexer:
         current = self._segments.get(correction.segment_id)
         if current is None:
             return []
+        turn_source = self._committed_turns if current.final else self._provisional_turns
+        words = current.words if correction.words is None else self._assign_word_speakers(
+            correction.words,
+            tuple(turn_source.values()),
+        )
+        if correction.speaker_id is not None:
+            speaker_id = correction.speaker_id
+        elif correction.words is not None:
+            speaker_id = self._speaker_for_segment(current.start, current.end, words, tuple(turn_source.values()))
+        else:
+            speaker_id = current.speaker_id
         updated = replace(
             current,
             text=current.text if correction.text is None else correction.text,
-            words=current.words if correction.words is None else correction.words,
-            speaker_id=current.speaker_id if correction.speaker_id is None else correction.speaker_id,
+            words=words,
+            speaker_id=speaker_id,
             revision=current.revision + 1,
         )
         if updated == current:
@@ -169,10 +190,13 @@ class TranscriptMultiplexer:
         for current in self.segments:
             if current.final or current.end > horizon:
                 continue
-            speaker_id = self._speaker_for(current.start, current.end, self._committed_turns.values())
+            turns = tuple(self._committed_turns.values())
+            words = self._assign_word_speakers(current.words, turns)
+            speaker_id = self._speaker_for_segment(current.start, current.end, words, turns)
             finalized = replace(
                 current,
                 speaker_id=speaker_id,
+                words=words,
                 final=True,
                 revision=current.revision + 1,
             )
@@ -185,24 +209,123 @@ class TranscriptMultiplexer:
         for current in self.segments:
             if not current.final:
                 continue
-            if overlap_seconds(current.start, current.end, turn.start, turn.end) <= 0:
+            if not self._span_near_turn(current.start, current.end, turn):
                 continue
-            speaker_id = self._speaker_for(current.start, current.end, self._committed_turns.values())
-            if speaker_id == current.speaker_id:
+            turns = tuple(self._committed_turns.values())
+            words = self._assign_word_speakers(current.words, turns)
+            speaker_id = self._speaker_for_segment(current.start, current.end, words, turns)
+            if speaker_id == current.speaker_id and words == current.words:
                 continue
-            updated = replace(current, speaker_id=speaker_id, revision=current.revision + 1)
+            updated = replace(current, speaker_id=speaker_id, words=words, revision=current.revision + 1)
             self._segments[updated.segment_id] = updated
             events.append(TranscriptEvent("transcript.update", updated, current, source="diarization"))
         return events
 
-    def _speaker_for(self, start: float, end: float, turns: Iterable[DiarizationTurn]) -> str:
+    def _assign_word_speakers(
+        self,
+        words: tuple[WordTimestamp, ...],
+        turns: Iterable[DiarizationTurn],
+    ) -> tuple[WordTimestamp, ...]:
+        turns = tuple(turns)
+        if not words:
+            return words
+        return tuple(
+            replace(word, speaker_id=self._speaker_for_word(word, turns))
+            for word in words
+        )
+
+    def _speaker_for_segment(
+        self,
+        start: float,
+        end: float,
+        words: tuple[WordTimestamp, ...],
+        turns: Iterable[DiarizationTurn],
+    ) -> str:
+        word_speaker = self._speaker_from_word_coverage(words)
+        if word_speaker is not None:
+            return word_speaker
+        return self._speaker_for_span(
+            start,
+            end,
+            turns,
+            min_overlap_seconds=0.0,
+            unknown_speaker=self.unknown_speaker,
+        )
+
+    def _speaker_from_word_coverage(self, words: tuple[WordTimestamp, ...]) -> str | None:
+        coverage: dict[str, tuple[float, int]] = {}
+        for word in words:
+            if word.speaker_id is None:
+                continue
+            duration = max(0.0, word.end - word.start)
+            total_duration, count = coverage.get(word.speaker_id, (0.0, 0))
+            coverage[word.speaker_id] = (total_duration + duration, count + 1)
+        if not coverage:
+            return None
+        return max(coverage.items(), key=lambda item: (item[1][0], item[1][1], item[0]))[0]
+
+    def _speaker_for_word(
+        self,
+        word: WordTimestamp,
+        turns: tuple[DiarizationTurn, ...],
+    ) -> str | None:
+        speaker_id = self._speaker_for_span(
+            word.start,
+            word.end,
+            turns,
+            min_overlap_seconds=self.min_word_overlap_seconds,
+            unknown_speaker=None,
+        )
+        if speaker_id is not None:
+            return speaker_id
+        return self._nearest_speaker_for(word.start, word.end, turns)
+
+    def _nearest_speaker_for(
+        self,
+        start: float,
+        end: float,
+        turns: tuple[DiarizationTurn, ...],
+    ) -> str | None:
+        candidates = [
+            (_distance_to_span(start, end, turn.start, turn.end), turn.confidence, turn.speaker_id)
+            for turn in turns
+        ]
+        candidates = [
+            candidate
+            for candidate in candidates
+            if candidate[0] <= self.nearest_turn_collar_seconds
+        ]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda item: (item[0], -item[1], item[2]))[2]
+
+    def _span_near_turn(self, start: float, end: float, turn: DiarizationTurn) -> bool:
+        return _distance_to_span(start, end, turn.start, turn.end) <= self.nearest_turn_collar_seconds
+
+    def _speaker_for_span(
+        self,
+        start: float,
+        end: float,
+        turns: Iterable[DiarizationTurn],
+        *,
+        min_overlap_seconds: float,
+        unknown_speaker: str | None,
+    ) -> str | None:
         candidates = [
             (overlap_seconds(start, end, turn.start, turn.end), turn.confidence, turn.speaker_id)
             for turn in turns
         ]
-        candidates = [candidate for candidate in candidates if candidate[0] > 0]
+        candidates = [
+            candidate
+            for candidate in candidates
+            if (
+                candidate[0] >= min_overlap_seconds
+                if min_overlap_seconds > 0.0
+                else candidate[0] > 0.0
+            )
+        ]
         if not candidates:
-            return self.unknown_speaker
+            return unknown_speaker
         return max(candidates, key=lambda item: (item[0], item[1]))[2]
 
 
@@ -213,3 +336,11 @@ def _turn_speaker_changed(previous: DiarizationTurn, current: DiarizationTurn) -
         or previous.end != current.end
         or previous.version != current.version
     )
+
+
+def _distance_to_span(a_start: float, a_end: float, b_start: float, b_end: float) -> float:
+    if overlap_seconds(a_start, a_end, b_start, b_end) > 0:
+        return 0.0
+    if a_end <= b_start:
+        return b_start - a_end
+    return a_start - b_end
