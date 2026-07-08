@@ -51,7 +51,27 @@ Defaults:
 - `global`: use `--language` for every row
 - `none`: omit Whisper language tokens
 
-The dataset loader reads all metadata columns so language can condition label tokenization. Context columns such as `context_before`, `context_after`, and `notes` are not injected into labels because this trainer is for audio-to-transcript LoRA tuning; adding textual context as decoder prompt conditioning should be a separate experiment.
+The dataset loader reads all metadata columns so language can condition label tokenization. Context columns such as `context_before`, `context_after`, and `notes` are not injected by default, keeping the historical audio-to-transcript LoRA path unchanged.
+
+Prompt-conditioned training is opt in:
+
+```powershell
+uv run --project training/whisper daiya-whisper-lora train `
+  --prompt-conditioning `
+  --prompt-max-tokens 64 `
+  --prompt-fields context_before `
+  --output-dir training/whisper/runs/whisper-large-v3-lora-prompt-terms
+```
+
+When enabled, the trainer extracts bounded prompt text from metadata and prepends it as Whisper decoder prompt tokens before the transcript label. Prompt tokens, including the transcript start token after the prompt, are masked from loss; only transcript/task target tokens train the model. The default prompt source extracts only `Terms:` lines from `context_before` so the model sees terminology/topic hints without learning to copy previous transcript prose.
+
+Prompt flags:
+
+- `--prompt-conditioning`: enable decoder prompt conditioning; defaults off
+- `--prompt-max-tokens`: maximum prompt body tokens; transcript tokens keep priority
+- `--prompt-fields`: comma-separated metadata fields, default `context_before`
+- `--prompt-full-context`: use the full selected context fields instead of only `Terms:` fragments
+- `--prompt-allow-future-context`: permit fields such as `context_after`; use only for explicit offline-labeling/leakage experiments
 
 Use `--max-train-samples` and `--max-eval-samples` for smoke runs:
 
@@ -61,6 +81,17 @@ uv run --project training/whisper daiya-whisper-lora train `
   --max-eval-samples 4 `
   --max-steps 1 `
   --output-dir training/whisper/runs/smoke
+```
+
+Prompt-conditioned smoke run:
+
+```powershell
+uv run --project training/whisper daiya-whisper-lora train `
+  --prompt-conditioning `
+  --max-train-samples 8 `
+  --max-eval-samples 4 `
+  --max-steps 1 `
+  --output-dir training/whisper/runs/smoke-prompt
 ```
 
 ## Output

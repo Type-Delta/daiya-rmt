@@ -80,6 +80,34 @@ def build_parser() -> argparse.ArgumentParser:
     )
     train_parser.add_argument("--push-to-hub", action="store_true")
     train_parser.add_argument("--hub-model-id", default=None)
+    train_parser.add_argument(
+        "--prompt-conditioning",
+        action="store_true",
+        help="Opt in to decoder prompt conditioning from metadata columns. Defaults stay unprompted.",
+    )
+    train_parser.add_argument(
+        "--prompt-max-tokens",
+        type=int,
+        default=64,
+        help="Maximum prompt body tokens before the transcript label. Transcript tokens keep priority.",
+    )
+    train_parser.add_argument(
+        "--prompt-fields",
+        default="context_before",
+        help="Comma-separated metadata fields to build the prompt from; defaults to context_before.",
+    )
+    train_parser.add_argument(
+        "--prompt-full-context",
+        dest="prompt_terms_only",
+        action="store_false",
+        help="Use full selected context fields instead of extracting only Terms: fragments.",
+    )
+    train_parser.set_defaults(prompt_terms_only=True)
+    train_parser.add_argument(
+        "--prompt-allow-future-context",
+        action="store_true",
+        help="Allow context_after/right-context fields. Use only for explicit offline-labeling experiments.",
+    )
 
     merge_parser = subparsers.add_parser(
         "merge",
@@ -166,6 +194,11 @@ def config_from_args(args: argparse.Namespace) -> TrainingConfig:
         resume_from_checkpoint=args.resume_from_checkpoint,
         push_to_hub=args.push_to_hub,
         hub_model_id=args.hub_model_id,
+        prompt_conditioning=args.prompt_conditioning,
+        prompt_max_tokens=args.prompt_max_tokens,
+        prompt_fields=tuple(field.strip() for field in args.prompt_fields.split(",") if field.strip()),
+        prompt_terms_only=args.prompt_terms_only,
+        prompt_allow_future_context=args.prompt_allow_future_context,
     )
 
 
