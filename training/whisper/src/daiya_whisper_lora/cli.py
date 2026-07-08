@@ -15,6 +15,7 @@ from .merge import (
 )
 
 if TYPE_CHECKING:
+    from .checkpoint_probe import ProbeConfig
     from .train import TrainingConfig
 
 
@@ -102,6 +103,62 @@ def build_parser() -> argparse.ArgumentParser:
     merge_parser.add_argument("--language", default=None)
     merge_parser.add_argument("--generation-max-length", type=int, default=225)
 
+    probe_parser = subparsers.add_parser(
+        "probe-checkpoints",
+        help="Score generated text quality for LoRA checkpoints and select the best CER checkpoint.",
+    )
+    probe_parser.add_argument("--run-dir", type=Path, required=True, help="Training run containing checkpoint-* dirs.")
+    probe_parser.add_argument("--base-model", default=DEFAULT_BASE_MODEL)
+    probe_parser.add_argument("--dataset-dir", type=Path, default=default_dataset_dir())
+    probe_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=default_checkpoint_probe_output_dir(),
+        help="Directory for checkpoint probe details JSONL and summary JSON.",
+    )
+    probe_parser.add_argument(
+        "--candidate",
+        dest="candidates",
+        action="append",
+        type=Path,
+        default=[],
+        help="Explicit adapter candidate to score. Can be repeated.",
+    )
+    probe_parser.add_argument("--no-checkpoints", dest="include_checkpoints", action="store_false")
+    probe_parser.set_defaults(include_checkpoints=True)
+    probe_parser.add_argument("--no-final", dest="include_final", action="store_false")
+    probe_parser.set_defaults(include_final=True)
+    probe_parser.add_argument("--split", default=None, help="Dataset split to probe; defaults to validation/test/eval/train.")
+    probe_parser.add_argument("--max-samples", type=int, default=32)
+    probe_parser.add_argument("--min-short-samples", type=int, default=8)
+    probe_parser.add_argument("--min-technical-term-samples", type=int, default=8)
+    probe_parser.add_argument("--short-utterance-seconds", type=float, default=3.0)
+    probe_parser.add_argument(
+        "--primary-metric",
+        choices=(
+            "micro_cer",
+            "mean_cer",
+            "micro_cer_no_space",
+            "mean_cer_no_space",
+            "micro_wer_like",
+            "mean_wer_like",
+        ),
+        default="micro_cer",
+    )
+    probe_parser.add_argument("--device", default="auto")
+    probe_parser.add_argument("--fp16", action="store_true")
+    probe_parser.add_argument("--bf16", action="store_true")
+    probe_parser.add_argument("--load-in-4bit", action="store_true")
+    probe_parser.add_argument("--task", default="transcribe")
+    probe_parser.add_argument("--language", default=None)
+    probe_parser.add_argument(
+        "--language-policy",
+        choices=("metadata", "global", "none"),
+        default="metadata",
+        help="Use row metadata, one global language, or no language hint during checkpoint generation.",
+    )
+    probe_parser.add_argument("--generation-max-length", type=int, default=225)
+
     return parser
 
 
@@ -120,6 +177,10 @@ def default_dataset_dir() -> Path:
 
 def default_output_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "runs" / "whisper-medium-lora"
+
+
+def default_checkpoint_probe_output_dir() -> Path:
+    return Path(__file__).resolve().parents[2] / "runs" / "checkpoint_probes"
 
 
 def config_from_args(args: argparse.Namespace) -> TrainingConfig:
@@ -189,6 +250,34 @@ def merge_config_from_args(args: argparse.Namespace) -> MergeConfig:
     )
 
 
+def probe_config_from_args(args: argparse.Namespace) -> ProbeConfig:
+    from .checkpoint_probe import ProbeConfig
+
+    return ProbeConfig(
+        run_dir=args.run_dir,
+        base_model=args.base_model,
+        dataset_dir=args.dataset_dir,
+        output_dir=args.output_dir,
+        candidates=tuple(args.candidates),
+        include_checkpoints=args.include_checkpoints,
+        include_final=args.include_final,
+        split=args.split,
+        max_samples=args.max_samples,
+        min_short_samples=args.min_short_samples,
+        min_technical_term_samples=args.min_technical_term_samples,
+        short_utterance_seconds=args.short_utterance_seconds,
+        primary_metric=args.primary_metric,
+        device=args.device,
+        fp16=args.fp16,
+        bf16=args.bf16,
+        load_in_4bit=args.load_in_4bit,
+        task=args.task,
+        language=args.language,
+        language_policy=args.language_policy,
+        generation_max_length=args.generation_max_length,
+    )
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
@@ -221,6 +310,17 @@ def main() -> None:
                     f"drift={result.wer.absolute_drift:.2f}, "
                     f"samples={result.wer.sample_count}"
                 )
+        return
+
+    if args.command == "probe-checkpoints":
+        from .checkpoint_probe import run_probe
+
+        result = run_probe(probe_config_from_args(args))
+        selected = result["selected_checkpoint"]
+        print(
+            "Selected checkpoint: "
+            f"{selected['name']} ({result['primary_metric']}={selected['overall'][result['primary_metric']]})"
+        )
         return
 
     parser.print_help()

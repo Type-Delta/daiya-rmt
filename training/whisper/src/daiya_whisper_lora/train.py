@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import evaluate
 import torch
 from datasets import Audio, Dataset, DatasetDict, load_dataset
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
@@ -20,6 +19,8 @@ from transformers import (
     WhisperForConditionalGeneration,
     WhisperProcessor,
 )
+
+from .metrics import aggregate_metric_rows, normalize_thai_spacing, text_metrics
 
 console = Console()
 
@@ -177,16 +178,28 @@ def train(config: TrainingConfig) -> None:
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
     compute_metrics = None
     if config.predict_with_generate:
-        wer_metric = evaluate.load("wer")
-
         def compute_metrics(pred: Any) -> dict[str, float]:
             pred_ids = pred.predictions
             label_ids = pred.label_ids
             label_ids[label_ids == -100] = processor.tokenizer.pad_token_id
 
-            pred_str = processor.tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
+            pred_str = [
+                normalize_thai_spacing(text)
+                for text in processor.tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
+            ]
             label_str = processor.tokenizer.batch_decode(label_ids, skip_special_tokens=True)
-            return {"wer": 100 * wer_metric.compute(predictions=pred_str, references=label_str)}
+            metric_rows = [
+                {"metrics": text_metrics(reference, prediction)}
+                for reference, prediction in zip(label_str, pred_str)
+            ]
+            metrics = aggregate_metric_rows(metric_rows)
+            return {
+                "cer": percent(metrics["micro_cer"]),
+                "cer_no_space": percent(metrics["micro_cer_no_space"]),
+                "wer_like": percent(metrics["micro_wer_like"]),
+                "mean_cer": percent(metrics["mean_cer"]),
+                "mean_wer_like": percent(metrics["mean_wer_like"]),
+            }
 
     training_args = build_training_args(config)
 
@@ -358,7 +371,7 @@ def build_training_args(config: TrainingConfig) -> Seq2SeqTrainingArguments:
         "dataloader_num_workers": config.dataloader_num_workers,
         "report_to": ["tensorboard"],
         "load_best_model_at_end": config.load_best_model_at_end,
-        "metric_for_best_model": "wer" if config.predict_with_generate else "eval_loss",
+        "metric_for_best_model": "cer" if config.predict_with_generate else "eval_loss",
         "greater_is_better": False,
         "push_to_hub": config.push_to_hub,
         "hub_model_id": config.hub_model_id,
@@ -371,6 +384,12 @@ def build_training_args(config: TrainingConfig) -> Seq2SeqTrainingArguments:
         kwargs["evaluation_strategy"] = "steps"
 
     return Seq2SeqTrainingArguments(**kwargs)
+
+
+def percent(value: float | None) -> float:
+    if value is None:
+        return 0.0
+    return 100.0 * value
 
 
 def build_trainer_kwargs(

@@ -41,8 +41,9 @@ Defaults:
 - base model: `openai/whisper-medium`
 - LoRA target modules: `q_proj,v_proj`
 - validation split: created from training data with `--validation-size 0.05` when no validation split exists
-- loss optimization: evaluation defaults to `eval_loss`; add `--predict-with-generate` when you want WER generation during eval
+- loss optimization: evaluation defaults to `eval_loss`; add `--predict-with-generate` when you want generated CER/WER-like metrics during eval
 - best-checkpoint loading: opt in with `--load-best-model-at-end` when `--save-steps` and `--eval-steps` are aligned
+- generation-gated selection: when both `--predict-with-generate` and `--load-best-model-at-end` are enabled, the trainer selects by generated `cer`
 - language conditioning: `--language-policy metadata` uses each row's `language` metadata when it maps to a Whisper language
 
 `--language-policy` accepts:
@@ -66,3 +67,25 @@ uv run --project training/whisper daiya-whisper-lora train `
 ## Output
 
 Training saves the LoRA adapter, tokenizer, feature extractor, and processor files under `--output-dir`. Use the adapter with PEFT on top of the same base model.
+
+## Checkpoint Probe
+
+Use `probe-checkpoints` to compare saved LoRA checkpoints with generated text metrics before merging or converting an adapter. The probe is intentionally small by default (`--max-samples 32`) and reports CER, no-space CER, WER-like score, short-utterance subset metrics, and English technical-term subset metrics.
+
+```powershell
+uv run --project training/whisper daiya-whisper-lora probe-checkpoints `
+  --run-dir training/whisper/runs/largev3-m2-iter1 `
+  --base-model openai/whisper-large-v3 `
+  --dataset-dir training/dataset/hf_datasets/whisper `
+  --max-samples 32 `
+  --device cuda `
+  --fp16
+```
+
+Probe summaries and per-sample details are written under:
+
+```text
+training/whisper/runs/checkpoint_probes
+```
+
+The summary names the selected checkpoint by `micro_cer` and includes the selected-vs-final adapter delta when the final adapter is present.
