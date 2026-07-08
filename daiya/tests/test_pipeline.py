@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -61,6 +62,33 @@ class EngineToggleTests(unittest.TestCase):
         chunk = PCMChunk(samples=np.zeros(SAMPLE_RATE, dtype=np.float32), start_time=0.0)
         self.assertEqual(pipeline.accept_chunk(chunk), [{"type": "tick", "time": chunk.end_time}])
         self.assertEqual(pipeline.flush(), [])
+
+
+class SegmenterConfigTests(unittest.TestCase):
+    def test_pipeline_passes_segmenter_configuration(self) -> None:
+        with patch("daiya.pipeline.create_utterance_segmenter") as create_segmenter:
+            create_segmenter.return_value = None
+            StreamingPipeline(
+                PipelineConfig(
+                    enable_asr=True,
+                    enable_diarization=False,
+                    segmenter_backend="auto",
+                    vad_threshold=0.42,
+                    vad_min_speech_seconds=0.11,
+                    vad_min_silence_seconds=0.33,
+                    vad_speech_padding_seconds=0.07,
+                    utterance_cap_seconds=3.5,
+                )
+            )
+
+        create_segmenter.assert_called_once_with(
+            backend="auto",
+            threshold=0.42,
+            min_speech_seconds=0.11,
+            min_silence_seconds=0.33,
+            speech_padding_seconds=0.07,
+            max_utterance_seconds=3.5,
+        )
 
 
 if __name__ == "__main__":

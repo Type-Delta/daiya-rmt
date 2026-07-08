@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import re
+import logging
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Callable, Iterable, Protocol, Sequence
 
 import numpy as np
 
 from .audio import PCMChunk, SAMPLE_RATE, ensure_mono_float32
 from .mux import ASRSegment, WordTimestamp
+
+LOGGER = logging.getLogger(__name__)
 
 
 class ASRUnavailableError(RuntimeError):
@@ -25,6 +28,18 @@ class Utterance:
         return self.end - self.start
 
 
+class UtteranceSegmenter(Protocol):
+    def accept(self, chunk: PCMChunk) -> list[Utterance]:
+        ...
+
+    def flush(self) -> list[Utterance]:
+        ...
+
+
+SpeechTimestamp = dict[str, int | float]
+SpeechTimestampFn = Callable[..., Sequence[SpeechTimestamp]]
+
+
 class EnergyUtteranceSegmenter:
     """Small dependency-free VAD fallback for tests and no-torch environments."""
 
@@ -35,12 +50,17 @@ class EnergyUtteranceSegmenter:
         threshold: float = 0.012,
         min_speech_seconds: float = 0.25,
         trailing_silence_seconds: float = 0.45,
+        min_silence_seconds: float | None = None,
+        speech_padding_seconds: float = 0.0,
         max_utterance_seconds: float = 8.0,
     ) -> None:
         self.sample_rate = sample_rate
         self.threshold = threshold
         self.min_speech_seconds = min_speech_seconds
-        self.trailing_silence_seconds = trailing_silence_seconds
+        self.trailing_silence_seconds = (
+            trailing_silence_seconds if min_silence_seconds is None else min_silence_seconds
+        )
+        self.speech_padding_seconds = speech_padding_seconds
         self.max_utterance_seconds = max_utterance_seconds
         self._buffer: list[np.ndarray] = []
         self._start: float | None = None
@@ -96,23 +116,183 @@ class EnergyUtteranceSegmenter:
 
 
 class SileroUtteranceSegmenter:
-    """Placeholder hook for Silero VAD without making torch a hard dependency."""
+    """Silero VAD utterance segmenter with lazy optional dependency loading."""
 
-    def __init__(self, *_args: object, **_kwargs: object) -> None:
+    def __init__(
+        self,
+        *,
+        sample_rate: int = SAMPLE_RATE,
+        threshold: float = 0.5,
+        min_speech_seconds: float = 0.25,
+        min_silence_seconds: float | None = None,
+        trailing_silence_seconds: float = 0.45,
+        speech_padding_seconds: float = 0.1,
+        max_utterance_seconds: float = 8.0,
+        model: object | None = None,
+        get_speech_timestamps: SpeechTimestampFn | None = None,
+    ) -> None:
+        self.sample_rate = sample_rate
+        self.threshold = threshold
+        self.min_speech_seconds = min_speech_seconds
+        self.min_silence_seconds = (
+            trailing_silence_seconds if min_silence_seconds is None else min_silence_seconds
+        )
+        self.speech_padding_seconds = max(0.0, speech_padding_seconds)
+        self.max_utterance_seconds = max_utterance_seconds
+        self._model = model
+        self._get_speech_timestamps = get_speech_timestamps
+        if self._get_speech_timestamps is None:
+            self._model, self._get_speech_timestamps = _load_silero_vad()
+        self._buffer: list[np.ndarray] = []
+        self._pre_roll = np.empty(0, dtype=np.float32)
+        self._start: float | None = None
+        self._last_voice_end: float | None = None
+
+    def accept(self, chunk: PCMChunk) -> list[Utterance]:
+        samples = ensure_mono_float32(chunk.samples)
+        timestamps = self._detect_speech(samples)
+        completed: list[Utterance] = []
+
+        if timestamps:
+            first_start = min(_timestamp_sample(item, "start", self.sample_rate) for item in timestamps)
+            last_end = max(_timestamp_sample(item, "end", self.sample_rate) for item in timestamps)
+            first_start = max(0, min(first_start, samples.size))
+            last_end = max(first_start, min(last_end, samples.size))
+            if self._start is None:
+                self._start_utterance(chunk, samples, first_start)
+            elif samples.size:
+                self._buffer.append(samples.copy())
+            self._last_voice_end = chunk.start_time + (last_end / self.sample_rate)
+        elif self._start is not None and samples.size:
+            self._buffer.append(samples.copy())
+
+        if self._start is not None:
+            utterance_duration = chunk.end_time - self._start
+            silence_duration = (
+                0.0
+                if self._last_voice_end is None
+                else max(0.0, chunk.end_time - self._last_voice_end)
+            )
+            hit_silence = silence_duration >= self.min_silence_seconds
+            hit_cap = utterance_duration >= self.max_utterance_seconds
+            if hit_silence or hit_cap:
+                end = (
+                    min(chunk.end_time, (self._last_voice_end or chunk.end_time) + self.speech_padding_seconds)
+                    if hit_silence
+                    else min(chunk.end_time, self._start + self.max_utterance_seconds)
+                )
+                utterance = self._drain(end=end)
+                if utterance.duration >= self.min_speech_seconds:
+                    completed.append(utterance)
+
+        if self._start is None:
+            self._remember_pre_roll(samples)
+        return completed
+
+    def flush(self) -> list[Utterance]:
+        if self._start is None:
+            self._pre_roll = np.empty(0, dtype=np.float32)
+            return []
+        utterance = self._drain(end=self._last_voice_end or self._start)
+        if utterance.duration < self.min_speech_seconds:
+            return []
+        return [utterance]
+
+    def _detect_speech(self, samples: np.ndarray) -> Sequence[SpeechTimestamp]:
+        if samples.size == 0:
+            return ()
+        get_speech_timestamps = self._get_speech_timestamps
+        if get_speech_timestamps is None:
+            raise ASRUnavailableError("Silero VAD detector is not configured")
+        return get_speech_timestamps(
+            samples,
+            self._model,
+            sampling_rate=self.sample_rate,
+            threshold=self.threshold,
+            min_speech_duration_ms=int(round(self.min_speech_seconds * 1000)),
+            min_silence_duration_ms=int(round(self.min_silence_seconds * 1000)),
+            speech_pad_ms=0,
+            return_seconds=False,
+        )
+
+    def _start_utterance(self, chunk: PCMChunk, samples: np.ndarray, first_start: int) -> None:
+        pad_samples = int(round(self.speech_padding_seconds * self.sample_rate))
+        start_index = max(0, first_start - pad_samples)
+        missing_pad = max(0, pad_samples - first_start)
+        prefix = self._pre_roll[-missing_pad:] if missing_pad else np.empty(0, dtype=np.float32)
+        current = samples[start_index:].copy() if samples.size else np.empty(0, dtype=np.float32)
+        self._buffer = [part for part in (prefix.copy(), current) if part.size]
+        self._start = chunk.start_time + (start_index / self.sample_rate) - (prefix.size / self.sample_rate)
+        self._pre_roll = np.empty(0, dtype=np.float32)
+
+    def _remember_pre_roll(self, samples: np.ndarray) -> None:
+        pad_samples = int(round(self.speech_padding_seconds * self.sample_rate))
+        if pad_samples <= 0 or samples.size == 0:
+            self._pre_roll = np.empty(0, dtype=np.float32)
+            return
+        combined = np.concatenate([self._pre_roll, samples])
+        self._pre_roll = combined[-pad_samples:].astype(np.float32, copy=False)
+
+    def _drain(self, *, end: float) -> Utterance:
+        start = self._start or 0.0
+        samples = np.concatenate(self._buffer) if self._buffer else np.empty(0, dtype=np.float32)
+        wanted = max(0, int(round((end - start) * self.sample_rate)))
+        samples = samples[:wanted] if wanted else samples
+        self._buffer = []
+        self._pre_roll = np.empty(0, dtype=np.float32)
+        self._start = None
+        self._last_voice_end = None
+        return Utterance(samples=samples, start=start, end=end)
+
+
+def create_utterance_segmenter(
+    *,
+    backend: str = "energy",
+    prefer_silero: bool = False,
+    **kwargs: object,
+) -> UtteranceSegmenter:
+    selected = backend.lower()
+    if selected not in {"energy", "silero", "auto"}:
+        raise ValueError(f"unknown utterance segmenter backend: {backend}")
+    if prefer_silero and selected == "energy":
+        selected = "auto"
+    if selected in {"silero", "auto"}:
         try:
-            import torch  # noqa: F401
-        except ImportError as exc:
-            raise ASRUnavailableError("Silero VAD requires the optional 'vad' extra") from exc
-        raise NotImplementedError("Silero VAD integration is not wired in this prototype yet")
-
-
-def create_utterance_segmenter(*, prefer_silero: bool = False, **kwargs: object) -> EnergyUtteranceSegmenter:
-    if prefer_silero:
-        try:
-            return SileroUtteranceSegmenter(**kwargs)  # type: ignore[return-value]
-        except (ASRUnavailableError, NotImplementedError):
+            return SileroUtteranceSegmenter(**kwargs)
+        except ASRUnavailableError as exc:
+            if selected == "silero":
+                LOGGER.warning("Silero VAD unavailable; falling back to energy segmenter: %s", exc)
             pass
     return EnergyUtteranceSegmenter(**kwargs)
+
+
+def _load_silero_vad() -> tuple[object, SpeechTimestampFn]:
+    try:
+        import torch
+    except ImportError as exc:
+        raise ASRUnavailableError("Silero VAD requires the optional 'vad' extra") from exc
+    try:
+        model, utils = torch.hub.load(  # type: ignore[attr-defined]
+            repo_or_dir="snakers4/silero-vad",
+            model="silero_vad",
+            trust_repo=True,
+        )
+    except Exception as exc:
+        raise ASRUnavailableError(f"failed to load Silero VAD: {exc}") from exc
+    raw_get_speech_timestamps = utils[0]
+
+    def get_speech_timestamps(audio: np.ndarray, vad_model: object, **kwargs: object) -> Sequence[SpeechTimestamp]:
+        tensor = torch.as_tensor(audio, dtype=torch.float32)
+        return raw_get_speech_timestamps(tensor, vad_model, **kwargs)
+
+    return model, get_speech_timestamps
+
+
+def _timestamp_sample(timestamp: SpeechTimestamp, key: str, sample_rate: int) -> int:
+    value = timestamp.get(key, 0)
+    if isinstance(value, float):
+        return int(round(value * sample_rate))
+    return int(value)
 
 
 class FasterWhisperASR:

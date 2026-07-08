@@ -21,7 +21,11 @@ class PipelineConfig:
     asr_compute_type: str = "int8_float16"
     language: str | None = None
     initial_prompt: str | None = None
+    segmenter_backend: str = "energy"
     vad_threshold: float = 0.012
+    vad_min_speech_seconds: float = 0.25
+    vad_min_silence_seconds: float = 0.45
+    vad_speech_padding_seconds: float = 0.0
     utterance_cap_seconds: float = 8.0
     diarization_profile: str = "balanced"
     diarization_backend: str = "auto"
@@ -41,7 +45,11 @@ class StreamingPipeline:
         self.mux = TranscriptMultiplexer()
         self.segmenter = (
             create_utterance_segmenter(
+                backend=self.config.segmenter_backend,
                 threshold=self.config.vad_threshold,
+                min_speech_seconds=self.config.vad_min_speech_seconds,
+                min_silence_seconds=self.config.vad_min_silence_seconds,
+                speech_padding_seconds=self.config.vad_speech_padding_seconds,
                 max_utterance_seconds=self.config.utterance_cap_seconds,
             )
             if self.config.enable_asr
@@ -197,6 +205,9 @@ def _with_runtime_defaults(config: PipelineConfig) -> PipelineConfig:
         updates["language"] = os.getenv("DAIYA_ASR_LANGUAGE") or None
     if config.initial_prompt is None:
         updates["initial_prompt"] = os.getenv("DAIYA_ASR_INITIAL_PROMPT") or None
+    configured_segmenter_backend = os.getenv("DAIYA_SEGMENTER_BACKEND")
+    if configured_segmenter_backend and config.segmenter_backend == "energy":
+        updates["segmenter_backend"] = configured_segmenter_backend
     configured_diarization_backend = os.getenv("DAIYA_DIARIZATION_BACKEND")
     if configured_diarization_backend and config.diarization_backend == "auto":
         updates["diarization_backend"] = configured_diarization_backend
