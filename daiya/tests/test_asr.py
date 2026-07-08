@@ -87,6 +87,36 @@ class FasterWhisperASRTest(unittest.TestCase):
         self.assertEqual((decoded[0].words[0].start, decoded[0].words[0].end), (10.0, 10.2))
         self.assertEqual((decoded[1].words[0].start, decoded[1].words[0].end), (11.8, 12.0))
 
+    def test_right_context_audio_is_appended_and_timestamps_are_clipped(self) -> None:
+        segments = [
+            SimpleNamespace(
+                start=0.2,
+                end=0.8,
+                text="target",
+                words=[SimpleNamespace(word="target", start=0.2, end=0.8, probability=0.9)],
+            ),
+            SimpleNamespace(
+                start=1.8,
+                end=2.3,
+                text="crossing out",
+                words=[SimpleNamespace(word="tail", start=1.8, end=2.3, probability=0.7)],
+            ),
+            SimpleNamespace(start=2.3, end=2.8, text="future only", words=[]),
+        ]
+        model = FakeWhisperModel(segments)
+        asr = _asr_with_model(model)
+        utterance = _utterance(duration_seconds=2.0)
+        right_context = np.zeros(SAMPLE_RATE, dtype=np.float32)
+
+        decoded = asr.transcribe_utterance(utterance, right_context_samples=right_context)
+
+        self.assertEqual(model.calls[0]["audio"].shape, (SAMPLE_RATE * 3,))
+        self.assertEqual(len(decoded), 2)
+        self.assertEqual([segment.text for segment in decoded], ["target", "crossing out"])
+        self.assertEqual((decoded[0].start, decoded[0].end), (10.2, 10.8))
+        self.assertEqual((decoded[1].start, decoded[1].end), (11.8, 12.0))
+        self.assertEqual((decoded[1].words[0].start, decoded[1].words[0].end), (11.8, 12.0))
+
     def test_low_confidence_helpers_flag_segment_and_words(self) -> None:
         segment = ASRSegment(
             start=0.0,

@@ -46,7 +46,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Enable experimental tiny VAD utterance deferral/merge before ASR.",
     )
+    parser.add_argument(
+        "--asr-right-context",
+        action="store_true",
+        help="Enable experimental right-audio context/lookahead before ASR finalization.",
+    )
     parser.add_argument("--asr-left-context-seconds", type=float, default=3.0)
+    parser.add_argument("--asr-right-context-seconds", type=float, default=0.8)
+    parser.add_argument("--asr-right-context-max-latency-seconds", type=float, default=1.0)
+    parser.add_argument("--asr-right-context-strategy", default="decode_with_right_context")
     parser.add_argument("--asr-tiny-utterance-seconds", type=float, default=0.55)
     parser.add_argument("--asr-delayed-correction-window-seconds", type=float, default=10.0)
     parser.add_argument(
@@ -74,7 +82,11 @@ async def run(args: argparse.Namespace) -> int:
             asr_left_context_enabled=args.asr_left_context,
             asr_delayed_correction_enabled=args.asr_delayed_correction,
             asr_tiny_utterance_merge_enabled=args.asr_tiny_merge,
+            asr_right_context_enabled=args.asr_right_context,
             asr_left_context_seconds=args.asr_left_context_seconds,
+            asr_right_context_seconds=args.asr_right_context_seconds,
+            asr_right_context_max_latency_seconds=args.asr_right_context_max_latency_seconds,
+            asr_right_context_strategy=args.asr_right_context_strategy,
             asr_tiny_utterance_seconds=args.asr_tiny_utterance_seconds,
             asr_delayed_correction_window_seconds=args.asr_delayed_correction_window_seconds,
         )

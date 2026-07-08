@@ -48,6 +48,10 @@ class PipelineConfig:
     asr_tiny_utterance_seconds: float = 0.55
     asr_tiny_utterance_max_gap_seconds: float = 0.35
     asr_tiny_utterance_max_delay_seconds: float = 0.7
+    asr_right_context_enabled: bool = False
+    asr_right_context_seconds: float = 0.8
+    asr_right_context_max_latency_seconds: float = 1.0
+    asr_right_context_strategy: str = "decode_with_right_context"
 
 
 class StreamingPipeline:
@@ -94,6 +98,7 @@ class StreamingPipeline:
         )
         self._audio_history: list[PCMChunk] = []
         self._pending_tiny_utterance: Utterance | None = None
+        self._pending_right_context: list[Utterance] = []
 
     def accept_chunk(self, chunk: PCMChunk) -> list[dict[str, Any]]:
         payloads: list[dict[str, Any]] = []
@@ -109,6 +114,7 @@ class StreamingPipeline:
             for utterance in self.segmenter.accept(chunk):
                 payloads.extend(self._handle_utterance(utterance))
             payloads.extend(self._release_stale_tiny_utterance(chunk.end_time))
+            payloads.extend(self._release_ready_right_context(chunk.end_time))
         return payloads
 
     def flush(self) -> list[dict[str, Any]]:
@@ -117,7 +123,8 @@ class StreamingPipeline:
             for utterance in self.segmenter.flush():
                 payloads.extend(self._handle_utterance(utterance))
             if self._pending_tiny_utterance is not None:
-                payloads.extend(self._transcribe_utterance(self._drain_pending_tiny_utterance()))
+                payloads.extend(self._finalize_utterance(self._drain_pending_tiny_utterance()))
+            payloads.extend(self._drain_right_context())
         if self.diarizer is not None:
             payloads.extend(self._handle_diarization_turns(self.diarizer.flush()))
         return payloads
@@ -160,25 +167,25 @@ class StreamingPipeline:
 
     def _handle_utterance(self, utterance: Utterance) -> list[dict[str, Any]]:
         if not self.config.asr_tiny_utterance_merge_enabled:
-            return self._transcribe_utterance(utterance)
+            return self._finalize_utterance(utterance)
 
         pending = self._pending_tiny_utterance
         if pending is not None:
             gap = utterance.start - pending.end
             if 0.0 <= gap <= self.config.asr_tiny_utterance_max_gap_seconds:
                 self._pending_tiny_utterance = None
-                return self._transcribe_utterance(_merge_utterances(pending, utterance))
-            payloads = self._transcribe_utterance(self._drain_pending_tiny_utterance())
+                return self._finalize_utterance(_merge_utterances(pending, utterance))
+            payloads = self._finalize_utterance(self._drain_pending_tiny_utterance())
             if utterance.duration < self.config.asr_tiny_utterance_seconds:
                 self._pending_tiny_utterance = utterance
                 return payloads
-            payloads.extend(self._transcribe_utterance(utterance))
+            payloads.extend(self._finalize_utterance(utterance))
             return payloads
 
         if utterance.duration < self.config.asr_tiny_utterance_seconds:
             self._pending_tiny_utterance = utterance
             return []
-        return self._transcribe_utterance(utterance)
+        return self._finalize_utterance(utterance)
 
     def _release_stale_tiny_utterance(self, now: float) -> list[dict[str, Any]]:
         pending = self._pending_tiny_utterance
@@ -186,7 +193,7 @@ class StreamingPipeline:
             return []
         if now - pending.end < self.config.asr_tiny_utterance_max_delay_seconds:
             return []
-        return self._transcribe_utterance(self._drain_pending_tiny_utterance())
+        return self._finalize_utterance(self._drain_pending_tiny_utterance())
 
     def _drain_pending_tiny_utterance(self) -> Utterance:
         pending = self._pending_tiny_utterance
@@ -195,13 +202,48 @@ class StreamingPipeline:
         self._pending_tiny_utterance = None
         return pending
 
+    def _finalize_utterance(self, utterance: Utterance) -> list[dict[str, Any]]:
+        if not self.config.asr_right_context_enabled:
+            return self._transcribe_utterance(utterance)
+        if self.config.asr_right_context_seconds <= 0.0:
+            return self._transcribe_utterance(utterance)
+        if self.config.asr_right_context_strategy != "decode_with_right_context":
+            return self._transcribe_utterance(utterance)
+        self._pending_right_context.append(utterance)
+        return self._release_ready_right_context(self._known_audio_end())
+
+    def _release_ready_right_context(self, now: float) -> list[dict[str, Any]]:
+        payloads: list[dict[str, Any]] = []
+        remaining: list[Utterance] = []
+        for utterance in self._pending_right_context:
+            target_end = utterance.end + self.config.asr_right_context_seconds
+            waited = now - utterance.end
+            has_target_context = now >= target_end
+            hit_latency_cap = waited >= self.config.asr_right_context_max_latency_seconds
+            if has_target_context or hit_latency_cap:
+                payloads.extend(self._transcribe_utterance(utterance))
+            else:
+                remaining.append(utterance)
+        self._pending_right_context = remaining
+        return payloads
+
+    def _drain_right_context(self) -> list[dict[str, Any]]:
+        pending = self._pending_right_context
+        self._pending_right_context = []
+        payloads: list[dict[str, Any]] = []
+        for utterance in pending:
+            payloads.extend(self._transcribe_utterance(utterance))
+        return payloads
+
     def _transcribe_utterance(self, utterance: Utterance) -> list[dict[str, Any]]:
         prompt = self._build_asr_prompt()
+        right_context = self._right_context_for(utterance)
         try:
             asr_segments = self.asr.transcribe_utterance(
                 utterance,
                 language=self.config.language,
                 initial_prompt=prompt,
+                right_context_samples=right_context,
             )
         except ASRUnavailableError as exc:
             return [
@@ -252,6 +294,20 @@ class StreamingPipeline:
         payloads.extend(self._apply_delayed_asr_correction(utterance, accepted_events, prompt))
         return payloads
 
+    def _right_context_for(self, utterance: Utterance) -> np.ndarray | None:
+        if not self.config.asr_right_context_enabled:
+            return None
+        if self.config.asr_right_context_seconds <= 0.0:
+            return None
+        if self.config.asr_right_context_strategy != "decode_with_right_context":
+            return None
+        available_end = min(
+            utterance.end + self.config.asr_right_context_seconds,
+            self._known_audio_end(),
+        )
+        context = self._audio_between(utterance.end, available_end)
+        return context if context.size else None
+
     def _build_asr_prompt(self) -> str | None:
         if not self.config.asr_prompt_memory_enabled:
             return self.config.initial_prompt
@@ -259,6 +315,8 @@ class StreamingPipeline:
 
     def _should_retry_with_left_context(self, utterance: Utterance, segments: list[ASRSegment]) -> bool:
         if not self.config.asr_left_context_enabled:
+            return False
+        if self.config.asr_right_context_enabled:
             return False
         utterance_start = float(getattr(utterance, "start", 0.0))
         utterance_duration = float(getattr(utterance, "duration", 0.0))
@@ -350,6 +408,7 @@ class StreamingPipeline:
             self.config.asr_left_context_seconds,
             self.config.asr_delayed_correction_window_seconds,
             self.config.utterance_cap_seconds,
+            self.config.asr_right_context_seconds + self.config.asr_right_context_max_latency_seconds,
         ) + 2.0
         cutoff = chunk.end_time - keep_seconds
         while self._audio_history and self._audio_history[0].end_time < cutoff:
@@ -377,6 +436,11 @@ class StreamingPipeline:
         if cursor < end:
             pieces.append(np.zeros(int(round((end - cursor) * SAMPLE_RATE)), dtype=np.float32))
         return np.concatenate(pieces).astype(np.float32, copy=False) if pieces else np.empty(0, dtype=np.float32)
+
+    def _known_audio_end(self) -> float:
+        if not self._audio_history:
+            return 0.0
+        return self._audio_history[-1].end_time
 
     def _serialize_transcript_event(self, event: TranscriptEvent) -> list[dict[str, Any]]:
         return [event.to_dict()]
