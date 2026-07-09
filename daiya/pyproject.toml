@@ -18,7 +18,8 @@ capture = [
     "sounddevice>=0.5.0,<1.0.0",
 ]
 vad = [
-    "torch>=2.8.0",
+    "silero-vad==6.2.1",
+    "torch>=2.8.0,<3.0.0",
 ]
 
 [project.scripts]

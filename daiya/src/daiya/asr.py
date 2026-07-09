@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import logging
 from dataclasses import dataclass
-from typing import Callable, Iterable, Protocol, Sequence
+from typing import Iterable, Mapping, Protocol
 
 import numpy as np
 
@@ -35,9 +35,21 @@ class UtteranceSegmenter(Protocol):
     def flush(self) -> list[Utterance]:
         ...
 
+    def reset(self) -> None:
+        ...
 
-SpeechTimestamp = dict[str, int | float]
-SpeechTimestampFn = Callable[..., Sequence[SpeechTimestamp]]
+
+class StreamingVADIterator(Protocol):
+    def __call__(
+        self,
+        samples: np.ndarray,
+        *,
+        return_seconds: bool = False,
+    ) -> Mapping[str, int | float] | None:
+        ...
+
+    def reset_states(self) -> None:
+        ...
 
 
 class EnergyUtteranceSegmenter:
@@ -104,6 +116,11 @@ class EnergyUtteranceSegmenter:
             return []
         return [utterance]
 
+    def reset(self) -> None:
+        self._buffer = []
+        self._start = None
+        self._last_voice_end = None
+
     def _drain(self, *, end: float) -> Utterance:
         start = self._start or 0.0
         samples = np.concatenate(self._buffer) if self._buffer else np.empty(0, dtype=np.float32)
@@ -116,7 +133,7 @@ class EnergyUtteranceSegmenter:
 
 
 class SileroUtteranceSegmenter:
-    """Silero VAD utterance segmenter with lazy optional dependency loading."""
+    """Stateful streaming Silero VAD over fixed 512-sample inference windows."""
 
     def __init__(
         self,
@@ -128,9 +145,14 @@ class SileroUtteranceSegmenter:
         trailing_silence_seconds: float = 0.45,
         speech_padding_seconds: float = 0.1,
         max_utterance_seconds: float = 8.0,
-        model: object | None = None,
-        get_speech_timestamps: SpeechTimestampFn | None = None,
+        vad_iterator: StreamingVADIterator | None = None,
     ) -> None:
+        if sample_rate != SAMPLE_RATE:
+            raise ValueError(f"Silero VAD requires {SAMPLE_RATE} Hz audio")
+        if min_speech_seconds < 0:
+            raise ValueError("min_speech_seconds must be non-negative")
+        if max_utterance_seconds <= 0:
+            raise ValueError("max_utterance_seconds must be positive")
         self.sample_rate = sample_rate
         self.threshold = threshold
         self.min_speech_seconds = min_speech_seconds
@@ -139,110 +161,154 @@ class SileroUtteranceSegmenter:
         )
         self.speech_padding_seconds = max(0.0, speech_padding_seconds)
         self.max_utterance_seconds = max_utterance_seconds
-        self._model = model
-        self._get_speech_timestamps = get_speech_timestamps
-        if self._get_speech_timestamps is None:
-            self._model, self._get_speech_timestamps = _load_silero_vad()
-        self._buffer: list[np.ndarray] = []
-        self._pre_roll = np.empty(0, dtype=np.float32)
-        self._start: float | None = None
-        self._last_voice_end: float | None = None
+        self._window_samples = 512
+        padding_ms = int(round(self.speech_padding_seconds * 1000))
+        self._padding_samples = (self.sample_rate * padding_ms) // 1000
+        self._min_speech_samples = int(round(self.min_speech_seconds * self.sample_rate))
+        self._max_utterance_samples = int(round(self.max_utterance_seconds * self.sample_rate))
+        self._vad_iterator = vad_iterator or _load_silero_vad_iterator(
+            threshold=self.threshold,
+            sample_rate=self.sample_rate,
+            min_silence_seconds=self.min_silence_seconds,
+            speech_padding_ms=padding_ms,
+        )
+        self._origin_time: float | None = None
+        self._total_samples = 0
+        self._pending = np.empty(0, dtype=np.float32)
+        self._pending_start = 0
+        self._audio = np.empty(0, dtype=np.float32)
+        self._audio_start = 0
+        self._speech_start: int | None = None
+        self._raw_speech_start: int | None = None
+        self._emitted_for_current_speech = False
 
     def accept(self, chunk: PCMChunk) -> list[Utterance]:
         samples = ensure_mono_float32(chunk.samples)
-        timestamps = self._detect_speech(samples)
         completed: list[Utterance] = []
+        if self._origin_time is not None and not self._is_contiguous(chunk.start_time):
+            completed.extend(self.flush())
+        if self._origin_time is None:
+            self._origin_time = chunk.start_time
+        if samples.size == 0:
+            return completed
 
-        if timestamps:
-            first_start = min(_timestamp_sample(item, "start", self.sample_rate) for item in timestamps)
-            last_end = max(_timestamp_sample(item, "end", self.sample_rate) for item in timestamps)
-            first_start = max(0, min(first_start, samples.size))
-            last_end = max(first_start, min(last_end, samples.size))
-            if self._start is None:
-                self._start_utterance(chunk, samples, first_start)
-            elif samples.size:
-                self._buffer.append(samples.copy())
-            self._last_voice_end = chunk.start_time + (last_end / self.sample_rate)
-        elif self._start is not None and samples.size:
-            self._buffer.append(samples.copy())
-
-        if self._start is not None:
-            utterance_duration = chunk.end_time - self._start
-            silence_duration = (
-                0.0
-                if self._last_voice_end is None
-                else max(0.0, chunk.end_time - self._last_voice_end)
-            )
-            hit_silence = silence_duration >= self.min_silence_seconds
-            hit_cap = utterance_duration >= self.max_utterance_seconds
-            if hit_silence or hit_cap:
-                end = (
-                    min(chunk.end_time, (self._last_voice_end or chunk.end_time) + self.speech_padding_seconds)
-                    if hit_silence
-                    else min(chunk.end_time, self._start + self.max_utterance_seconds)
-                )
-                utterance = self._drain(end=end)
-                if utterance.duration >= self.min_speech_seconds:
-                    completed.append(utterance)
-
-        if self._start is None:
-            self._remember_pre_roll(samples)
+        self._append_audio(samples)
+        self._pending = np.concatenate([self._pending, samples])
+        while self._pending.size >= self._window_samples:
+            frame = self._pending[: self._window_samples]
+            self._pending = self._pending[self._window_samples :]
+            frame_end = self._pending_start + self._window_samples
+            self._pending_start = frame_end
+            event = self._vad_iterator(frame, return_seconds=False)
+            completed.extend(self._handle_event(event, limit=frame_end))
+            completed.extend(self._split_at_max_duration(limit=frame_end))
+        self._prune_audio()
         return completed
 
     def flush(self) -> list[Utterance]:
-        if self._start is None:
-            self._pre_roll = np.empty(0, dtype=np.float32)
-            return []
-        utterance = self._drain(end=self._last_voice_end or self._start)
-        if utterance.duration < self.min_speech_seconds:
-            return []
-        return [utterance]
+        completed: list[Utterance] = []
+        actual_end = self._total_samples
+        if self._pending.size:
+            padded = np.pad(self._pending, (0, self._window_samples - self._pending.size))
+            event = self._vad_iterator(padded, return_seconds=False)
+            completed.extend(self._handle_event(event, limit=actual_end))
+            completed.extend(self._split_at_max_duration(limit=actual_end))
+        if self._speech_start is not None:
+            raw_duration = actual_end - (self._raw_speech_start or self._speech_start)
+            if raw_duration >= self._min_speech_samples or self._emitted_for_current_speech:
+                utterance = self._utterance(self._speech_start, actual_end)
+                if utterance is not None:
+                    completed.append(utterance)
+        self.reset()
+        return completed
 
-    def _detect_speech(self, samples: np.ndarray) -> Sequence[SpeechTimestamp]:
-        if samples.size == 0:
-            return ()
-        get_speech_timestamps = self._get_speech_timestamps
-        if get_speech_timestamps is None:
-            raise ASRUnavailableError("Silero VAD detector is not configured")
-        return get_speech_timestamps(
-            samples,
-            self._model,
-            sampling_rate=self.sample_rate,
-            threshold=self.threshold,
-            min_speech_duration_ms=int(round(self.min_speech_seconds * 1000)),
-            min_silence_duration_ms=int(round(self.min_silence_seconds * 1000)),
-            speech_pad_ms=0,
-            return_seconds=False,
+    def reset(self) -> None:
+        self._vad_iterator.reset_states()
+        self._origin_time = None
+        self._total_samples = 0
+        self._pending = np.empty(0, dtype=np.float32)
+        self._pending_start = 0
+        self._audio = np.empty(0, dtype=np.float32)
+        self._audio_start = 0
+        self._speech_start = None
+        self._raw_speech_start = None
+        self._emitted_for_current_speech = False
+
+    def _is_contiguous(self, start_time: float) -> bool:
+        if self._origin_time is None:
+            return True
+        expected = self._origin_time + (self._total_samples / self.sample_rate)
+        return abs(start_time - expected) <= (1.5 / self.sample_rate)
+
+    def _append_audio(self, samples: np.ndarray) -> None:
+        self._audio = np.concatenate([self._audio, samples])
+        self._total_samples += int(samples.size)
+
+    def _handle_event(
+        self,
+        event: Mapping[str, int | float] | None,
+        *,
+        limit: int,
+    ) -> list[Utterance]:
+        if not event:
+            return []
+        completed: list[Utterance] = []
+        if "start" in event and self._speech_start is None:
+            start = max(0, min(_event_sample(event["start"], self.sample_rate), limit))
+            self._speech_start = start
+            self._raw_speech_start = max(start, limit - self._window_samples)
+            self._emitted_for_current_speech = False
+        if "end" in event and self._speech_start is not None:
+            end = max(self._speech_start, min(_event_sample(event["end"], self.sample_rate), limit))
+            raw_end = max(self._raw_speech_start or self._speech_start, end - self._padding_samples)
+            raw_duration = raw_end - (self._raw_speech_start or self._speech_start)
+            if raw_duration >= self._min_speech_samples or self._emitted_for_current_speech:
+                utterance = self._utterance(self._speech_start, end)
+                if utterance is not None:
+                    completed.append(utterance)
+            self._speech_start = None
+            self._raw_speech_start = None
+            self._emitted_for_current_speech = False
+        return completed
+
+    def _split_at_max_duration(self, *, limit: int) -> list[Utterance]:
+        completed: list[Utterance] = []
+        while (
+            self._speech_start is not None
+            and limit - self._speech_start >= self._max_utterance_samples
+        ):
+            end = self._speech_start + self._max_utterance_samples
+            utterance = self._utterance(self._speech_start, end)
+            if utterance is not None:
+                completed.append(utterance)
+            self._speech_start = end
+            self._raw_speech_start = end
+            self._emitted_for_current_speech = True
+        return completed
+
+    def _utterance(self, start_sample: int, end_sample: int) -> Utterance | None:
+        if end_sample <= start_sample or self._origin_time is None:
+            return None
+        relative_start = start_sample - self._audio_start
+        relative_end = end_sample - self._audio_start
+        if relative_start < 0 or relative_end > self._audio.size:
+            raise RuntimeError("Silero audio buffer no longer contains an emitted event range")
+        samples = self._audio[relative_start:relative_end].copy()
+        return Utterance(
+            samples=samples,
+            start=self._origin_time + (start_sample / self.sample_rate),
+            end=self._origin_time + (end_sample / self.sample_rate),
         )
 
-    def _start_utterance(self, chunk: PCMChunk, samples: np.ndarray, first_start: int) -> None:
-        pad_samples = int(round(self.speech_padding_seconds * self.sample_rate))
-        start_index = max(0, first_start - pad_samples)
-        missing_pad = max(0, pad_samples - first_start)
-        prefix = self._pre_roll[-missing_pad:] if missing_pad else np.empty(0, dtype=np.float32)
-        current = samples[start_index:].copy() if samples.size else np.empty(0, dtype=np.float32)
-        self._buffer = [part for part in (prefix.copy(), current) if part.size]
-        self._start = chunk.start_time + (start_index / self.sample_rate) - (prefix.size / self.sample_rate)
-        self._pre_roll = np.empty(0, dtype=np.float32)
-
-    def _remember_pre_roll(self, samples: np.ndarray) -> None:
-        pad_samples = int(round(self.speech_padding_seconds * self.sample_rate))
-        if pad_samples <= 0 or samples.size == 0:
-            self._pre_roll = np.empty(0, dtype=np.float32)
-            return
-        combined = np.concatenate([self._pre_roll, samples])
-        self._pre_roll = combined[-pad_samples:].astype(np.float32, copy=False)
-
-    def _drain(self, *, end: float) -> Utterance:
-        start = self._start or 0.0
-        samples = np.concatenate(self._buffer) if self._buffer else np.empty(0, dtype=np.float32)
-        wanted = max(0, int(round((end - start) * self.sample_rate)))
-        samples = samples[:wanted] if wanted else samples
-        self._buffer = []
-        self._pre_roll = np.empty(0, dtype=np.float32)
-        self._start = None
-        self._last_voice_end = None
-        return Utterance(samples=samples, start=start, end=end)
+    def _prune_audio(self) -> None:
+        if self._speech_start is not None:
+            keep_from = self._speech_start
+        else:
+            keep_from = max(0, self._pending_start - self._padding_samples)
+        drop = min(max(0, keep_from - self._audio_start), int(self._audio.size))
+        if drop:
+            self._audio = self._audio[drop:].copy()
+            self._audio_start += drop
 
 
 def create_utterance_segmenter(
@@ -266,30 +332,33 @@ def create_utterance_segmenter(
     return EnergyUtteranceSegmenter(**kwargs)
 
 
-def _load_silero_vad() -> tuple[object, SpeechTimestampFn]:
+def _load_silero_vad_iterator(
+    *,
+    threshold: float,
+    sample_rate: int,
+    min_silence_seconds: float,
+    speech_padding_ms: int,
+) -> StreamingVADIterator:
     try:
-        import torch
+        from silero_vad import VADIterator, load_silero_vad
     except ImportError as exc:
-        raise ASRUnavailableError("Silero VAD requires the optional 'vad' extra") from exc
+        raise ASRUnavailableError(
+            "Silero VAD requires the optional 'vad' extra (silero-vad==6.2.1)"
+        ) from exc
     try:
-        model, utils = torch.hub.load(  # type: ignore[attr-defined]
-            repo_or_dir="snakers4/silero-vad",
-            model="silero_vad",
-            trust_repo=True,
+        model = load_silero_vad(onnx=False)
+        return VADIterator(
+            model,
+            threshold=threshold,
+            sampling_rate=sample_rate,
+            min_silence_duration_ms=int(round(min_silence_seconds * 1000)),
+            speech_pad_ms=speech_padding_ms,
         )
     except Exception as exc:
         raise ASRUnavailableError(f"failed to load Silero VAD: {exc}") from exc
-    raw_get_speech_timestamps = utils[0]
-
-    def get_speech_timestamps(audio: np.ndarray, vad_model: object, **kwargs: object) -> Sequence[SpeechTimestamp]:
-        tensor = torch.as_tensor(audio, dtype=torch.float32)
-        return raw_get_speech_timestamps(tensor, vad_model, **kwargs)
-
-    return model, get_speech_timestamps
 
 
-def _timestamp_sample(timestamp: SpeechTimestamp, key: str, sample_rate: int) -> int:
-    value = timestamp.get(key, 0)
+def _event_sample(value: int | float, sample_rate: int) -> int:
     if isinstance(value, float):
         return int(round(value * sample_rate))
     return int(value)

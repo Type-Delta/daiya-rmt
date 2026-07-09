@@ -1,190 +1,196 @@
-# PR4 VAD Segment-Size/Padding Bake-Off
+# PR4 Stateful Silero VAD Bake-Off
 
-This experiment compares utterance segmentation settings without requiring ASR
-or diarization model downloads. The tool calls
-`daiya.asr.create_utterance_segmenter(...)` when available and records the
-actual segmenter backend used, so dependency-free energy fallback runs and
-Silero-backed runs produce comparable rows.
+## Decision
 
-## Lightweight Run
+Keep energy VAD as the default and Silero opt-in. Stateful Silero is promising,
+but two recordings and an offline-pyannote RTTM are not enough evidence to
+change the runtime default.
 
-Use one or more local audio files:
+For the next streaming experiment, use the sensitive Silero row
+(`threshold=0.4`, `min_speech=0.2s`, `min_silence=0.3s`, `pad=0.05s`,
+`cap=8s`). It improved ASR CER and the speaker-boundary proxy while avoiding
+the long segments produced by the ASR-best conservative row.
+
+This report supersedes the earlier PR4 result that ran only energy VAD over 109
+already-cut WAVs. That run measured re-segmentation of reference chunks, not
+Silero or full-timeline streaming behavior, and is not evidence for backend
+selection.
+
+## Implementation
+
+`SileroUtteranceSegmenter` uses `silero-vad==6.2.1` and its stateful
+`VADIterator`. Arbitrary Daiya PCM chunks are buffered into the required
+512-sample 16 kHz inference windows. Iterator/model state and sample offsets
+persist across `accept()` calls. Padding, short-speech filtering, max-duration
+splits, residual-frame flush, reset, discontinuities, and audio slicing are
+handled by Daiya without resetting the iterator between chunks.
+
+Normal runtime does not call `torch.hub`. The optional `vad` extra pins the
+package and constrains Torch below the next major version:
 
 ```powershell
-uv run python lab/vad_bakeoff.py .\path\to\sample.wav `
-  --backend energy,auto,silero `
-  --threshold 0.008,0.012 `
-  --min-speech-seconds 0.20,0.35 `
-  --min-silence-seconds 0.30,0.50 `
-  --speech-padding-seconds 0.00,0.10,0.20 `
-  --max-utterance-seconds 8.0,12.0
+uv sync --project daiya --extra vad
 ```
 
-The script defaults to `--backend energy` so a lightweight run does not fetch
-optional VAD assets. Pass `--backend silero` or `--backend energy,silero`
-explicitly after installing the `vad` extra. Silero thresholds usually need a
-different sweep range than energy thresholds; start around `0.3,0.5,0.7`.
+Energy remains dependency-free and is used by default. `auto` and unavailable
+explicit-Silero requests fall back safely; the bake-off marks a requested
+Silero row as skipped if that fallback occurs, so it cannot be mislabeled as a
+Silero result. Backend-specific threshold defaults are `0.012` for energy and
+`0.5` for Silero; padding defaults are `0` and `0.1s`, respectively.
 
-Or sweep a directory:
+## Method
 
-```powershell
-uv run python lab/vad_bakeoff.py --audio-glob "training/dataset/**/*.wav" --limit 20
-```
+The corrected run used two continuous, unsegmented timeline inputs:
 
-Outputs are written under `lab/artifacts/vad_bakeoff/` by default:
+1. A 600-second window from `Th-En_sample_11.m4a`, source time
+   `3600-4200s`. Its 109 human transcript/speech intervals cover
+   `0-599.4s` in the extracted window.
+2. The first 180 seconds of `Th-En_sample_02.mp3`, paired with the existing
+   51-turn, 3-speaker offline-pyannote RTTM. This RTTM is a proxy, not human
+   speaker-turn truth.
 
-- `vad_bakeoff_<stamp>.csv`
-- `vad_bakeoff_<stamp>.jsonl`
-- optional per-utterance details with `--write-details`
+The 109 derived manual-label WAVs were not benchmark inputs. Both continuous
+inputs were replayed as 100 ms Daiya chunks; Silero internally retained state
+over 512-sample model windows.
 
-## Expected Row Shape
-
-Each setting combination emits one comparable row:
+Model and environment:
 
 ```text
-status,backend,segmenter_backend,threshold,min_speech_seconds,
-min_silence_seconds,speech_padding_seconds,max_utterance_seconds,
-audio_files,audio_seconds,utterance_count,total_speech_seconds,
-mean_duration_seconds,p50_duration_seconds,p95_duration_seconds,
-boundary_precision,boundary_recall,boundary_f1,asr_cer,asr_status,
-elapsed_seconds,notes
+M2 CT2: C:/JokaMain/ProjectShowRoom/daiya-rmt/training/whisper/runs/largev3-m2-iter1-ct2-int8_float16
+Python: 3.12.10
+faster-whisper: 1.2.1
+silero-vad: 6.2.1
+torch: 2.11.0+cu128
+numpy: 2.4.6
 ```
 
-Silero rows may show `segmenter_backend=energy` and a note that Silero fell
-back to energy when the optional `vad` dependency path is unavailable. Energy
-ignores speech padding; the Silero backend applies speech padding around
-detected speech.
+CER is the primary transcript metric. `WER-like` is whitespace-token edit
+rate and is weak for Thai, so it is reported only as a secondary signal.
+Boundary matching uses a 250 ms collar. Coverage is interval-union based;
+`duplicated seconds` detects overlapping emitted utterances.
 
-## Smoke Result
+## Reproduction
 
-I ran a lightweight smoke test on a synthetic 16 kHz WAV with two tone regions
-separated by 0.35 seconds of silence:
+Create the two continuous evaluation inputs:
 
 ```powershell
-$env:PYTHONPATH='daiya/src'
-uv run --no-project --with numpy python lab/vad_bakeoff.py $env:TEMP\daiya-vad-bakeoff-smoke.wav `
-  --backend energy `
-  --threshold 0.012 `
+$main = 'C:/JokaMain/ProjectShowRoom/daiya-rmt'
+$out = 'lab/artifacts/vad_bakeoff/pr4_corrected'
+New-Item -ItemType Directory -Force "$out/inputs" | Out-Null
+
+ffmpeg -ss 3600 -t 600 `
+  -i "$main/training/dataset/raw/whisper/Th-En_sample_11.m4a" `
+  -ac 1 -ar 16000 -c:a pcm_s16le -y `
+  "$out/inputs/Th-En_sample_11_manual_3600_4200.wav"
+
+ffmpeg -t 180 `
+  -i "$main/training/resources/Th-En_sample_02.mp3" `
+  -ac 1 -ar 16000 -c:a pcm_s16le -y `
+  "$out/inputs/Th-En_sample_02.wav"
+```
+
+`manual_refs.jsonl` is generated from
+`training/dataset/manual-label/m2-label-ref/ref_labels.txt`, with
+`file_name=Th-En_sample_11_manual_3600_4200.wav` and each header's local
+`start`, `end`, and following transcript text.
+
+Run each configuration row by substituting the values in the table below:
+
+```powershell
+$python = "$main/.venv/Scripts/python.exe"
+$model = "$main/training/whisper/runs/largev3-m2-iter1-ct2-int8_float16"
+$rttm = "$main/lab/statefull-diarization/artifacts/stage6-benchmark/Th-En_sample_02-balanced-offline-reference.rttm"
+
+& $python lab/vad_bakeoff.py `
+  "$out/inputs/Th-En_sample_11_manual_3600_4200.wav" `
+  "$out/inputs/Th-En_sample_02.wav" `
+  --chunk-seconds 0.10 `
+  --backend silero `
+  --threshold 0.40 `
   --min-speech-seconds 0.20 `
   --min-silence-seconds 0.30 `
-  --speech-padding-seconds 0.00 `
+  --speech-padding-seconds 0.05 `
   --max-utterance-seconds 8.0 `
-  --output-dir $env:TEMP\daiya-vad-bakeoff-smoke
-```
-
-Output:
-
-```text
-energy actual=energy thr=0.012  silence=0.3   pad=0.0  n=1    speech=1.25     mean=1.25 p95=1.25 status=ok
-```
-
-## Optional Boundary Scoring
-
-Boundary scoring does not load a diarization model. Provide reference speech
-turns as JSONL:
-
-```json
-{"audio_path":"sample.wav","start":0.42,"end":2.80}
-{"audio_path":"sample.wav","start":3.20,"end":5.10}
-```
-
-Run:
-
-```powershell
-uv run python lab/vad_bakeoff.py .\sample.wav `
-  --reference-boundaries-jsonl .\refs\speech_boundaries.jsonl `
-  --boundary-collar-seconds 0.25
-```
-
-RTTM `SPEAKER` rows are also accepted with `--reference-rttm`.
-
-## Optional ASR CER Hook
-
-CER scoring is skipped unless `--asr-model` and `--reference-text-jsonl` are
-provided. Non-local model names are not resolved unless
-`--allow-model-download` is passed.
-
-Realistic local-model command if the CTranslate2 export exists:
-
-```powershell
-uv run python lab/vad_bakeoff.py .\path\to\sample.wav `
-  --backend energy,silero `
-  --threshold 0.008,0.012 `
-  --reference-text-jsonl .\refs\full_transcripts.jsonl `
-  --asr-model training/whisper/runs/largev3-m2-iter1-ct2-int8_float16 `
-  --asr-device cuda `
-  --asr-compute-type int8_float16
-```
-
-Reference text JSONL shape:
-
-```json
-{"audio_path":"sample.wav","text":"full reference transcript for this audio"}
-```
-
-## M2 Main-Model Benchmark
-
-The local M2 CT2 artifact was routed from the main worktree:
-
-```text
-C:/JokaMain/ProjectShowRoom/daiya-rmt/training/whisper/runs/largev3-m2-iter1-ct2-int8_float16
-```
-
-Reference text JSONL was generated under the ignored artifacts directory from
-`training/dataset/manual-label/m2-label-ref/ref_labels.txt`, matched to the 109
-chunk WAVs in the main worktree's `m2-label-ref/audio/` directory.
-
-Command:
-
-```powershell
-$env:PYTHONPATH='C:/Users/Kornnaras/.codex/worktrees/fe20/daiya-rmt/daiya/src'
-$env:PYTHONIOENCODING='utf-8'
-& 'C:/JokaMain/ProjectShowRoom/daiya-rmt/.venv/Scripts/python.exe' `
-  'C:/Users/Kornnaras/.codex/worktrees/fe20/daiya-rmt/lab/vad_bakeoff.py' `
-  --audio-glob 'C:/JokaMain/ProjectShowRoom/daiya-rmt/training/dataset/manual-label/m2-label-ref/audio/*.wav' `
-  --backend energy `
-  --threshold 0.012 `
-  --min-speech-seconds 0.20 `
-  --min-silence-seconds 0.30,0.50 `
-  --speech-padding-seconds 0.00 `
-  --max-utterance-seconds 8.0 `
-  --reference-text-jsonl 'C:/Users/Kornnaras/.codex/worktrees/fe20/daiya-rmt/lab/artifacts/vad_bakeoff/m2_label_refs.jsonl' `
-  --asr-model 'C:/JokaMain/ProjectShowRoom/daiya-rmt/training/whisper/runs/largev3-m2-iter1-ct2-int8_float16' `
+  --reference-boundaries-jsonl "$out/manual_refs.jsonl" `
+  --reference-rttm $rttm `
+  --reference-text-jsonl "$out/manual_refs.jsonl" `
+  --asr-model $model `
   --asr-device auto `
   --asr-compute-type int8_float16 `
-  --output-dir 'C:/Users/Kornnaras/.codex/worktrees/fe20/daiya-rmt/lab/artifacts/vad_bakeoff/m2_main_model'
+  --write-details `
+  --output-dir $out
 ```
 
-Artifacts:
+Exact rows:
+
+| name | backend | threshold | min speech | min silence | pad | cap |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| energy baseline | energy | 0.012 | 0.20 | 0.45 | 0.00 | 8 |
+| Silero sensitive | silero | 0.40 | 0.20 | 0.30 | 0.05 | 8 |
+| Silero balanced | silero | 0.50 | 0.20 | 0.50 | 0.10 | 8 |
+| Silero conservative | silero | 0.60 | 0.35 | 0.70 | 0.15 | 12 |
+
+## Results
+
+Pooled across 780 seconds:
+
+| row | utt. | selected sec | <1s | 1-2s | 2-5s | 5-8s | 8s+ | CER | WER-like | boundary F1 | missed ref sec | non-ref sec | VAD RTF | ASR RTF |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| energy | 159 | 665.600 | 16 | 33 | 50 | 26 | 34 | 0.2691 | 0.7320 | 0.5678 | 22.707 | 64.130 | 0.0005 | 0.2836 |
+| Silero sensitive | 179 | 678.396 | 24 | 42 | 58 | 21 | 34 | 0.2540 | 0.7431 | **0.6095** | 10.668 | 65.076 | 0.0100 | 0.2266 |
+| Silero balanced | 152 | 700.516 | 14 | 27 | 45 | 17 | 49 | 0.2583 | 0.7044 | 0.5595 | 1.281 | 77.251 | 0.0101 | 0.2207 |
+| Silero conservative | 102 | 718.222 | 2 | 10 | 30 | 17 | 43 | **0.2339** | **0.6409** | 0.4789 | **1.059** | 94.735 | **0.0100** | **0.2033** |
+
+All rows emitted zero duplicated/overlapping seconds.
+
+Separated boundary results:
+
+| row | human transcript boundary F1 | human missed speech sec | RTTM proxy boundary F1 | RTTM missed speech sec |
+| --- | ---: | ---: | ---: | ---: |
+| energy | **0.6597** | 19.306 | 0.2911 | 3.401 |
+| Silero sensitive | 0.6573 | 7.786 | **0.4746** | 2.882 |
+| Silero balanced | 0.6467 | **0.676** | 0.2968 | 0.605 |
+| Silero conservative | 0.5483 | 0.680 | 0.2878 | **0.379** |
+
+Interpretation:
+
+- Sensitive Silero improved CER by 0.0150 absolute over energy, reduced missed
+  human-reference speech by 11.52 seconds, and substantially improved the
+  RTTM-proxy boundary F1. It produced 20 more utterances and a few more
+  sub-two-second segments.
+- Balanced Silero nearly saturated reference speech coverage and improved
+  CER, but its proxy boundary F1 was effectively tied with energy and it
+  included 13.12 more seconds outside reference speech.
+- Conservative Silero produced the best CER and WER-like scores and the fewest
+  utterances, but its 12-second segments lost speaker-turn boundary recall.
+  It is an ASR-oriented profile, not the recommended streaming/diarization
+  profile.
+- Silero startup plus streaming inference used about RTF 0.0100 versus
+  energy's 0.0005. Both are well below real time; ASR remained the dominant
+  cost.
+
+## Artifacts
+
+Ignored benchmark artifacts:
 
 ```text
-lab/artifacts/vad_bakeoff/m2_main_model/vad_bakeoff_20260708T081219Z.csv
-lab/artifacts/vad_bakeoff/m2_main_model/vad_bakeoff_20260708T081219Z.jsonl
+lab/artifacts/vad_bakeoff/pr4_corrected/energy_baseline.{csv,jsonl}
+lab/artifacts/vad_bakeoff/pr4_corrected/silero_sensitive.{csv,jsonl}
+lab/artifacts/vad_bakeoff/pr4_corrected/silero_balanced.{csv,jsonl}
+lab/artifacts/vad_bakeoff/pr4_corrected/silero_conservative.{csv,jsonl}
+lab/artifacts/vad_bakeoff/pr4_corrected/*_details.jsonl
+lab/artifacts/vad_bakeoff/pr4_corrected/per_dataset_metrics.json
+lab/artifacts/vad_bakeoff/pr4_corrected/manual_refs.jsonl
 ```
 
-Measured rows:
+## Limitations
 
-| backend | threshold | min speech | min silence | max utterance | files | audio sec | utterances | total speech sec | p50 | p95 | CER | elapsed sec |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| energy | 0.012 | 0.20 | 0.30 | 8.0 | 109 | 451.159 | 122 | 441.418 | 2.75 | 8.0 | 0.175265 | 150.993 |
-| energy | 0.012 | 0.20 | 0.50 | 8.0 | 109 | 451.159 | 122 | 441.418 | 2.75 | 8.0 | 0.176828 | 142.012 |
-
-Interpretation: on this chunked M2 reference set, changing energy trailing
-silence from 0.30s to 0.50s did not change utterance count or duration
-distribution. The 0.30s setting was slightly better on CER by about 0.0016
-absolute. Boundary metrics are blank because no turn-boundary reference JSONL
-or RTTM was provided for this run.
-
-## Heavy Benchmark Blockers
-
-Heavy ASR or diarization bake-offs cannot run in the lightweight path when:
-
-- `faster-whisper` is not installed.
-- The local model directory is missing.
-- A remote model name is provided without `--allow-model-download`.
-- Full-audio reference transcripts or boundary annotations are unavailable.
-- CUDA, pyannote, or gated Hugging Face artifacts are required for separate
-  diarization evaluation.
-
-Those cases are reported as skipped in `asr_status` or left blank for boundary
-metrics; segmentation summary rows still emit.
+- Only one human-transcribed 10-minute window was available.
+- The sample-11 source offset is inferred from matching dataset metadata; no
+  explicit manifest records the `+3600s` alignment.
+- The sample-02 RTTM covers only 180 seconds and is offline pyannote output,
+  not human speaker-turn ground truth. Boundary results are relative.
+- CER compares concatenated ASR output with a cleaned human transcript and
+  does not assign text to individual reference turns.
+- This experiment measures VAD boundaries and their overlap with speaker
+  turns; it does not rerun diarization or calculate DER for each VAD row.

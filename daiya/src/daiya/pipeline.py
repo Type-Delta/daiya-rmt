@@ -22,10 +22,10 @@ class PipelineConfig:
     language: str | None = None
     initial_prompt: str | None = None
     segmenter_backend: str = "energy"
-    vad_threshold: float = 0.012
+    vad_threshold: float | None = None
     vad_min_speech_seconds: float = 0.25
     vad_min_silence_seconds: float = 0.45
-    vad_speech_padding_seconds: float = 0.0
+    vad_speech_padding_seconds: float | None = None
     utterance_cap_seconds: float = 8.0
     diarization_profile: str = "balanced"
     diarization_backend: str = "auto"
@@ -46,11 +46,19 @@ class StreamingPipeline:
         self.segmenter = (
             create_utterance_segmenter(
                 backend=self.config.segmenter_backend,
-                threshold=self.config.vad_threshold,
                 min_speech_seconds=self.config.vad_min_speech_seconds,
                 min_silence_seconds=self.config.vad_min_silence_seconds,
-                speech_padding_seconds=self.config.vad_speech_padding_seconds,
                 max_utterance_seconds=self.config.utterance_cap_seconds,
+                **(
+                    {"threshold": self.config.vad_threshold}
+                    if self.config.vad_threshold is not None
+                    else {}
+                ),
+                **(
+                    {"speech_padding_seconds": self.config.vad_speech_padding_seconds}
+                    if self.config.vad_speech_padding_seconds is not None
+                    else {}
+                ),
             )
             if self.config.enable_asr
             else None

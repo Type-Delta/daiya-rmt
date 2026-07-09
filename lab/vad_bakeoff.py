@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import csv
 import glob
+import importlib.metadata
 import itertools
 import json
 import math
@@ -43,17 +44,41 @@ FIELDNAMES = [
     "speech_padding_seconds",
     "max_utterance_seconds",
     "audio_files",
+    "audio_paths",
     "audio_seconds",
     "utterance_count",
+    "duration_lt_1_count",
+    "duration_1_2_count",
+    "duration_2_5_count",
+    "duration_5_8_count",
+    "duration_8_plus_count",
     "total_speech_seconds",
+    "unique_predicted_seconds",
+    "overlap_duplicated_seconds",
     "mean_duration_seconds",
     "p50_duration_seconds",
     "p95_duration_seconds",
     "boundary_precision",
     "boundary_recall",
     "boundary_f1",
+    "scored_seconds",
+    "reference_speech_seconds",
+    "reference_speech_covered_seconds",
+    "reference_speech_missed_seconds",
+    "predicted_non_reference_seconds",
     "asr_cer",
+    "asr_wer_like",
     "asr_status",
+    "segmentation_seconds",
+    "segmentation_rtf",
+    "asr_seconds",
+    "asr_rtf",
+    "model_path",
+    "python_version",
+    "numpy_version",
+    "silero_vad_version",
+    "torch_version",
+    "faster_whisper_version",
     "elapsed_seconds",
     "notes",
 ]
@@ -160,7 +185,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chunk-seconds", type=positive_float, default=0.25)
     parser.add_argument("--backend", default="energy", help="Comma-separated: energy, auto, silero.")
     parser.add_argument("--prefer-silero", action="store_true", help="Prefer Silero when backend=auto.")
-    parser.add_argument("--threshold", default="0.008,0.012,0.02", help="Comma-separated VAD thresholds.")
+    parser.add_argument(
+        "--threshold",
+        default=None,
+        help="Comma-separated VAD thresholds. Defaults to 0.012 for energy and 0.5 for Silero.",
+    )
     parser.add_argument("--min-speech-seconds", default="0.20,0.35", help="Comma-separated values.")
     parser.add_argument(
         "--min-silence-seconds",
@@ -318,27 +347,31 @@ def read_wav_stdlib(path: Path) -> tuple[Any, int]:
 
 def iter_settings(args: argparse.Namespace) -> Iterable[Setting]:
     backends = parse_str_list(args.backend, allowed={"energy", "auto", "silero"})
-    thresholds = parse_float_list(args.threshold)
     min_speech_values = parse_float_list(args.min_speech_seconds)
     min_silence_values = parse_float_list(args.min_silence_seconds)
     padding_values = parse_float_list(args.speech_padding_seconds)
     max_values = parse_float_list(args.max_utterance_seconds)
-    for backend, threshold, min_speech, min_silence, padding, max_utterance in itertools.product(
-        backends,
-        thresholds,
-        min_speech_values,
-        min_silence_values,
-        padding_values,
-        max_values,
-    ):
-        yield Setting(
-            backend=backend,
-            threshold=threshold,
-            min_speech_seconds=min_speech,
-            min_silence_seconds=min_silence,
-            speech_padding_seconds=padding,
-            max_utterance_seconds=max_utterance,
+    for backend in backends:
+        thresholds = (
+            parse_float_list(args.threshold)
+            if args.threshold is not None
+            else [0.012 if backend == "energy" else 0.5]
         )
+        for threshold, min_speech, min_silence, padding, max_utterance in itertools.product(
+            thresholds,
+            min_speech_values,
+            min_silence_values,
+            padding_values,
+            max_values,
+        ):
+            yield Setting(
+                backend=backend,
+                threshold=threshold,
+                min_speech_seconds=min_speech,
+                min_silence_seconds=min_silence,
+                speech_padding_seconds=padding,
+                max_utterance_seconds=max_utterance,
+            )
 
 
 def parse_str_list(raw: str, *, allowed: set[str]) -> list[str]:
@@ -368,7 +401,8 @@ def run_setting(
     asr_runner: Any | None,
     text_refs: dict[str, str],
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    started = time.perf_counter()
+    total_started = time.perf_counter()
+    segmentation_started = total_started
     notes: list[str] = []
     segments: list[Segment] = []
     details: list[dict[str, Any]] = []
@@ -376,25 +410,25 @@ def run_setting(
     status = "ok"
 
     try:
+        segmenter, used_kwargs = create_segmenter(setting, args)
+        segmenter_backend = backend_name(segmenter)
+        silero_required = setting.backend == "silero" or (
+            setting.backend == "auto" and args.prefer_silero
+        )
+        if silero_required and segmenter_backend != "silero":
+            raise BakeoffSkip(
+                f"requested Silero but factory returned {segmenter_backend}; "
+                "install/configure the optional Silero dependency"
+            )
+        notes.extend(dropped_setting_notes(setting, used_kwargs, segmenter_backend))
         for audio in audio_inputs:
-            segmenter, used_kwargs = create_segmenter(setting, args)
-            actual_backend = backend_name(segmenter)
-            if segmenter_backend and segmenter_backend != actual_backend:
-                segmenter_backend = "mixed"
-            else:
-                segmenter_backend = actual_backend
-            setting_notes = dropped_setting_notes(setting, used_kwargs, actual_backend)
-            for note in setting_notes:
-                if note not in notes:
-                    notes.append(note)
-
             audio_segments = segment_audio(segmenter, audio, args.chunk_seconds)
             segments.extend(audio_segments)
             for index, segment in enumerate(audio_segments, start=1):
                 details.append(
                     {
                         **setting_to_dict(setting),
-                        "segmenter_backend": actual_backend,
+                        "segmenter_backend": segmenter_backend,
                         "audio_path": str(audio.path),
                         "utterance_index": index,
                         "start": segment.start,
@@ -402,18 +436,34 @@ def run_setting(
                         "duration": segment.duration,
                     }
                 )
+    except BakeoffSkip as exc:
+        status = "skipped"
+        notes.append(str(exc))
+        segments.clear()
+        details.clear()
     except Exception as exc:
         status = "failed"
         notes.append(f"{type(exc).__name__}: {exc}")
 
+    segmentation_seconds = time.perf_counter() - segmentation_started
     durations = [segment.duration for segment in segments]
-    boundary_metrics = score_boundaries(segments, boundary_refs, args.boundary_collar_seconds)
-    asr_cer, asr_status = score_asr(segments, asr_runner, text_refs)
+    audio_paths = [audio.path for audio in audio_inputs]
+    boundary_metrics = score_boundaries(
+        segments, boundary_refs, args.boundary_collar_seconds, audio_paths=audio_paths
+    )
+    coverage_metrics = score_coverage(segments, boundary_refs, audio_paths=audio_paths)
+    asr_started = time.perf_counter()
+    asr_cer, asr_wer_like, asr_status = score_asr(
+        segments, asr_runner, text_refs, audio_paths=audio_paths
+    )
+    asr_seconds = time.perf_counter() - asr_started if isinstance(asr_runner, ASRRunner) else 0.0
     if asr_status:
         notes.append(asr_status)
 
-    if setting.backend == "silero" and segmenter_backend == "energy":
-        notes.append("requested silero but factory fell back to energy")
+    audio_seconds = sum(audio.seconds for audio in audio_inputs)
+    predicted_audio_seconds = sum(durations)
+    buckets = duration_bucket_counts(durations)
+    identities = reproducibility_identities(args)
 
     row = {
         "status": status,
@@ -425,18 +475,39 @@ def run_setting(
         "speech_padding_seconds": setting.speech_padding_seconds,
         "max_utterance_seconds": setting.max_utterance_seconds,
         "audio_files": len(audio_inputs),
-        "audio_seconds": round_float(sum(audio.seconds for audio in audio_inputs)),
+        "audio_paths": json.dumps([str(audio.path.resolve()) for audio in audio_inputs], ensure_ascii=False),
+        "audio_seconds": round_float(audio_seconds),
         "utterance_count": len(segments),
+        **buckets,
         "total_speech_seconds": round_float(sum(durations)),
+        "unique_predicted_seconds": round_float(coverage_metrics["unique_predicted_seconds"]),
+        "overlap_duplicated_seconds": round_float(coverage_metrics["overlap_duplicated_seconds"]),
         "mean_duration_seconds": round_float(mean(durations)),
         "p50_duration_seconds": round_float(percentile(durations, 50)),
         "p95_duration_seconds": round_float(percentile(durations, 95)),
         "boundary_precision": round_float(boundary_metrics.get("precision")),
         "boundary_recall": round_float(boundary_metrics.get("recall")),
         "boundary_f1": round_float(boundary_metrics.get("f1")),
+        "scored_seconds": round_float(coverage_metrics["scored_seconds"]),
+        "reference_speech_seconds": round_float(coverage_metrics["reference_speech_seconds"]),
+        "reference_speech_covered_seconds": round_float(
+            coverage_metrics["reference_speech_covered_seconds"]
+        ),
+        "reference_speech_missed_seconds": round_float(
+            coverage_metrics["reference_speech_missed_seconds"]
+        ),
+        "predicted_non_reference_seconds": round_float(
+            coverage_metrics["predicted_non_reference_seconds"]
+        ),
         "asr_cer": round_float(asr_cer),
+        "asr_wer_like": round_float(asr_wer_like),
         "asr_status": asr_status,
-        "elapsed_seconds": round_float(time.perf_counter() - started),
+        "segmentation_seconds": round_float(segmentation_seconds),
+        "segmentation_rtf": round_float(segmentation_seconds / audio_seconds if audio_seconds else None),
+        "asr_seconds": round_float(asr_seconds),
+        "asr_rtf": round_float(asr_seconds / predicted_audio_seconds if predicted_audio_seconds else None),
+        **identities,
+        "elapsed_seconds": round_float(time.perf_counter() - total_started),
         "notes": "; ".join(sorted(set(notes))),
     }
     return row, details
@@ -517,13 +588,23 @@ def load_boundary_references(args: argparse.Namespace) -> dict[str, list[tuple[f
 def load_text_references(path: Path | None) -> dict[str, str]:
     if path is None:
         return {}
-    refs: dict[str, str] = {}
-    for row in read_jsonl(path):
+    parts: dict[str, list[tuple[tuple[float, float, int], str]]] = {}
+    for row_index, row in enumerate(read_jsonl(path)):
         key = reference_key(row)
         text = row.get("text") or row.get("reference")
         if key and text:
-            refs[key] = str(text)
-    return refs
+            start = as_float(row.get("start"))
+            end = as_float(row.get("end"))
+            order = (
+                start if start is not None else math.inf,
+                end if end is not None else math.inf,
+                row_index,
+            )
+            parts.setdefault(key, []).append((order, str(text).strip()))
+    return {
+        key: " ".join(text for _order, text in sorted(values) if text)
+        for key, values in parts.items()
+    }
 
 
 def read_jsonl(path: Path) -> Iterable[dict[str, Any]]:
@@ -571,6 +652,7 @@ def score_boundaries(
     segments: list[Segment],
     refs: dict[str, list[tuple[float, float]]],
     collar: float,
+    audio_paths: Iterable[Path] | None = None,
 ) -> dict[str, float | None]:
     if not refs:
         return {"precision": None, "recall": None, "f1": None}
@@ -580,25 +662,156 @@ def score_boundaries(
         key = str(segment.audio_path.resolve())
         predicted_by_audio.setdefault(key, []).append((segment.start, segment.end))
 
-    pred_boundaries: list[float] = []
-    ref_boundaries: list[float] = []
-    for audio_key, predicted_segments in predicted_by_audio.items():
-        path = Path(audio_key)
-        reference_segments: list[tuple[float, float]] = []
-        for key in matching_reference_keys(path):
-            reference_segments.extend(refs.get(key, []))
+    matched = 0
+    predicted_count = 0
+    reference_count = 0
+    paths = {Path(key) for key in predicted_by_audio}
+    paths.update(path.resolve() for path in audio_paths or [])
+    for path in paths:
+        predicted_segments = predicted_by_audio.get(str(path.resolve()), [])
+        reference_segments = references_for_path(path, refs)
         if not reference_segments:
             continue
-        pred_boundaries.extend(boundaries_from_segments(predicted_segments))
-        ref_boundaries.extend(boundaries_from_segments(reference_segments))
+        scope_start = min(start for start, _end in reference_segments)
+        scope_end = max(end for _start, end in reference_segments)
+        pred_boundaries = [
+            boundary
+            for boundary in boundaries_from_segments(predicted_segments)
+            if scope_start <= boundary <= scope_end
+        ]
+        ref_boundaries = boundaries_from_segments(reference_segments)
+        matched += count_boundary_matches(pred_boundaries, ref_boundaries, collar)
+        predicted_count += len(pred_boundaries)
+        reference_count += len(ref_boundaries)
 
-    if not pred_boundaries and not ref_boundaries:
+    if not predicted_count and not reference_count:
         return {"precision": None, "recall": None, "f1": None}
-    matched = count_boundary_matches(pred_boundaries, ref_boundaries, collar)
-    precision = matched / len(pred_boundaries) if pred_boundaries else 0.0
-    recall = matched / len(ref_boundaries) if ref_boundaries else 0.0
+    precision = matched / predicted_count if predicted_count else 0.0
+    recall = matched / reference_count if reference_count else 0.0
     f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
     return {"precision": precision, "recall": recall, "f1": f1}
+
+
+def score_coverage(
+    segments: list[Segment],
+    refs: dict[str, list[tuple[float, float]]],
+    audio_paths: Iterable[Path] | None = None,
+) -> dict[str, float | None]:
+    predicted_by_audio: dict[Path, list[tuple[float, float]]] = {}
+    for segment in segments:
+        predicted_by_audio.setdefault(segment.audio_path.resolve(), []).append(
+            (segment.start, segment.end)
+        )
+
+    raw_predicted = sum(segment.duration for segment in segments)
+    unique_predicted = sum(
+        intervals_duration(merge_intervals(intervals))
+        for intervals in predicted_by_audio.values()
+    )
+    result: dict[str, float | None] = {
+        "unique_predicted_seconds": unique_predicted,
+        "overlap_duplicated_seconds": max(0.0, raw_predicted - unique_predicted),
+        "scored_seconds": None,
+        "reference_speech_seconds": None,
+        "reference_speech_covered_seconds": None,
+        "reference_speech_missed_seconds": None,
+        "predicted_non_reference_seconds": None,
+    }
+    if not refs:
+        return result
+
+    scored = reference_speech = covered = non_reference = 0.0
+    matched_files = 0
+    all_paths = set(predicted_by_audio)
+    all_paths.update(path.resolve() for path in audio_paths or [])
+    for path in all_paths:
+        reference_intervals = references_for_path(path, refs)
+        if not reference_intervals:
+            continue
+        matched_files += 1
+        reference_union = merge_intervals(reference_intervals)
+        scope_start = min(start for start, _end in reference_union)
+        scope_end = max(end for _start, end in reference_union)
+        predicted_union = merge_intervals(
+            clip_intervals(predicted_by_audio.get(path, []), scope_start, scope_end)
+        )
+        scored += scope_end - scope_start
+        reference_duration = intervals_duration(reference_union)
+        intersection = intersection_duration(predicted_union, reference_union)
+        reference_speech += reference_duration
+        covered += intersection
+        non_reference += max(0.0, intervals_duration(predicted_union) - intersection)
+
+    if matched_files:
+        result.update(
+            {
+                "scored_seconds": scored,
+                "reference_speech_seconds": reference_speech,
+                "reference_speech_covered_seconds": covered,
+                "reference_speech_missed_seconds": max(0.0, reference_speech - covered),
+                "predicted_non_reference_seconds": non_reference,
+            }
+        )
+    return result
+
+
+def references_for_path(
+    path: Path,
+    refs: dict[str, list[tuple[float, float]]],
+) -> list[tuple[float, float]]:
+    found: list[tuple[float, float]] = []
+    seen: set[tuple[float, float]] = set()
+    for key in matching_reference_keys(path):
+        for interval in refs.get(key, []):
+            if interval not in seen:
+                found.append(interval)
+                seen.add(interval)
+    return sorted(found)
+
+
+def clip_intervals(
+    intervals: Iterable[tuple[float, float]],
+    scope_start: float,
+    scope_end: float,
+) -> list[tuple[float, float]]:
+    return [
+        (max(start, scope_start), min(end, scope_end))
+        for start, end in intervals
+        if min(end, scope_end) > max(start, scope_start)
+    ]
+
+
+def merge_intervals(intervals: Iterable[tuple[float, float]]) -> list[tuple[float, float]]:
+    ordered = sorted((float(start), float(end)) for start, end in intervals if end > start)
+    merged: list[tuple[float, float]] = []
+    for start, end in ordered:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def intervals_duration(intervals: Iterable[tuple[float, float]]) -> float:
+    return sum(max(0.0, end - start) for start, end in intervals)
+
+
+def intersection_duration(
+    left: list[tuple[float, float]],
+    right: list[tuple[float, float]],
+) -> float:
+    left_index = right_index = 0
+    total = 0.0
+    while left_index < len(left) and right_index < len(right):
+        start = max(left[left_index][0], right[right_index][0])
+        end = min(left[left_index][1], right[right_index][1])
+        if end > start:
+            total += end - start
+        if left[left_index][1] <= right[right_index][1]:
+            left_index += 1
+        else:
+            right_index += 1
+    return total
 
 
 def boundaries_from_segments(segments: list[tuple[float, float]]) -> list[float]:
@@ -659,16 +872,20 @@ def score_asr(
     segments: list[Segment],
     asr_runner: Any | None,
     text_refs: dict[str, str],
-) -> tuple[float | None, str]:
+    audio_paths: Iterable[Path] | None = None,
+) -> tuple[float | None, float | None, str]:
     if asr_runner is None:
-        return None, ""
+        return None, None, ""
     if isinstance(asr_runner, ASRSkip):
-        return None, asr_runner.reason
+        return None, None, asr_runner.reason
     if np is None:
-        return None, "asr skipped: numpy is not installed"
+        return None, None, "asr skipped: numpy is not installed"
 
     predictions: dict[str, list[str]] = {}
-    for segment in segments:
+    for path in audio_paths or []:
+        if any(text_refs.get(key) for key in matching_reference_keys(path)):
+            predictions[str(path.resolve())] = []
+    for segment in sorted(segments, key=lambda item: (str(item.audio_path.resolve()), item.start, item.end)):
         refs = [text_refs.get(key) for key in matching_reference_keys(segment.audio_path)]
         if not any(refs):
             continue
@@ -680,11 +897,11 @@ def score_asr(
             )
             text = " ".join(str(getattr(item, "text", "")).strip() for item in fw_segments).strip()
         except Exception as exc:
-            return None, f"asr failed: {type(exc).__name__}: {exc}"
+            return None, None, f"asr failed: {type(exc).__name__}: {exc}"
         predictions.setdefault(str(segment.audio_path.resolve()), []).append(text)
 
-    distances = 0
-    lengths = 0
+    char_distances = char_lengths = 0
+    word_distances = word_lengths = 0
     for audio_key, parts in predictions.items():
         reference = None
         path = Path(audio_key)
@@ -696,18 +913,28 @@ def score_asr(
             continue
         ref = normalize_for_cer(reference)
         hyp = normalize_for_cer(" ".join(parts))
-        distances += levenshtein(ref, hyp)
-        lengths += len(ref)
-    if lengths == 0:
-        return None, "asr skipped: no matching reference text"
-    return distances / lengths, "asr ok"
+        char_distances += levenshtein(ref, hyp)
+        char_lengths += len(ref)
+        ref_words = normalize_for_wer(reference)
+        hyp_words = normalize_for_wer(" ".join(parts))
+        word_distances += levenshtein(ref_words, hyp_words)
+        word_lengths += len(ref_words)
+    if char_lengths == 0:
+        return None, None, "asr skipped: no matching reference text"
+    cer = char_distances / char_lengths
+    wer_like = word_distances / word_lengths if word_lengths else None
+    return cer, wer_like, "asr ok"
 
 
 def normalize_for_cer(text: str) -> str:
     return " ".join(text.lower().split())
 
 
-def levenshtein(reference: str, hypothesis: str) -> int:
+def normalize_for_wer(text: str) -> list[str]:
+    return text.lower().split()
+
+
+def levenshtein(reference: Any, hypothesis: Any) -> int:
     if len(reference) < len(hypothesis):
         reference, hypothesis = hypothesis, reference
     previous = list(range(len(hypothesis) + 1))
@@ -734,6 +961,50 @@ def setting_to_dict(setting: Setting) -> dict[str, Any]:
         "speech_padding_seconds": setting.speech_padding_seconds,
         "max_utterance_seconds": setting.max_utterance_seconds,
     }
+
+
+def duration_bucket_counts(durations: Iterable[float]) -> dict[str, int]:
+    result = {
+        "duration_lt_1_count": 0,
+        "duration_1_2_count": 0,
+        "duration_2_5_count": 0,
+        "duration_5_8_count": 0,
+        "duration_8_plus_count": 0,
+    }
+    for duration in durations:
+        if duration < 1.0:
+            result["duration_lt_1_count"] += 1
+        elif duration < 2.0:
+            result["duration_1_2_count"] += 1
+        elif duration < 5.0:
+            result["duration_2_5_count"] += 1
+        elif duration < 8.0:
+            result["duration_5_8_count"] += 1
+        else:
+            result["duration_8_plus_count"] += 1
+    return result
+
+
+def reproducibility_identities(args: argparse.Namespace) -> dict[str, str | None]:
+    model_path = None
+    if args.asr_model:
+        candidate = Path(args.asr_model).expanduser()
+        model_path = str(candidate.resolve()) if candidate.exists() else str(args.asr_model)
+    return {
+        "model_path": model_path,
+        "python_version": sys.version.split()[0],
+        "numpy_version": package_version("numpy"),
+        "silero_vad_version": package_version("silero-vad"),
+        "torch_version": package_version("torch"),
+        "faster_whisper_version": package_version("faster-whisper"),
+    }
+
+
+def package_version(distribution: str) -> str | None:
+    try:
+        return importlib.metadata.version(distribution)
+    except importlib.metadata.PackageNotFoundError:
+        return None
 
 
 def mean(values: list[float]) -> float | None:

@@ -90,6 +90,24 @@ class SegmenterConfigTests(unittest.TestCase):
             max_utterance_seconds=3.5,
         )
 
+    def test_pipeline_leaves_backend_specific_vad_defaults_unset(self) -> None:
+        with patch("daiya.pipeline.create_utterance_segmenter") as create_segmenter:
+            create_segmenter.return_value = None
+            StreamingPipeline(
+                PipelineConfig(
+                    enable_asr=True,
+                    enable_diarization=False,
+                    segmenter_backend="silero",
+                )
+            )
+
+        create_segmenter.assert_called_once_with(
+            backend="silero",
+            min_speech_seconds=0.25,
+            min_silence_seconds=0.45,
+            max_utterance_seconds=8.0,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

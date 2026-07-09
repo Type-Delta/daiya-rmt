@@ -32,10 +32,20 @@ def build_parser() -> argparse.ArgumentParser:
         default="energy",
         help="Utterance segmentation backend. Defaults to dependency-free energy VAD.",
     )
-    parser.add_argument("--vad-threshold", type=float, default=0.012)
+    parser.add_argument(
+        "--vad-threshold",
+        type=float,
+        default=None,
+        help="VAD threshold. Defaults to 0.012 for energy and 0.5 for Silero.",
+    )
     parser.add_argument("--vad-min-speech-seconds", type=float, default=0.25)
     parser.add_argument("--vad-min-silence-seconds", type=float, default=0.45)
-    parser.add_argument("--vad-speech-padding-seconds", type=float, default=0.0)
+    parser.add_argument(
+        "--vad-speech-padding-seconds",
+        type=float,
+        default=None,
+        help="Speech padding. Defaults to 0 for energy and 0.1 seconds for Silero.",
+    )
     parser.add_argument("--utterance-cap-seconds", type=float, default=8.0)
     parser.add_argument(
         "--diarization-backend",
