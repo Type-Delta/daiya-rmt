@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from daiya_whisper_lora.checkpoint_probe import (
     ProbeConfig,
     audio_duration_seconds,
     discover_candidates,
     metric_delta,
+    run_probe,
     select_best_candidate,
     select_probe_indices,
 )
@@ -82,13 +84,100 @@ class CheckpointSelectionTests(unittest.TestCase):
 
     def test_best_candidate_uses_primary_metric_then_micro_cer_tiebreak(self) -> None:
         summaries = [
-            {"name": "checkpoint-500", "overall": {"micro_cer": 0.22, "mean_cer": 0.20}},
-            {"name": "checkpoint-400", "overall": {"micro_cer": 0.21, "mean_cer": 0.20}},
+            {"name": "checkpoint-500", "overall": {"count": 1, "micro_cer": 0.22, "mean_cer": 0.20}},
+            {"name": "checkpoint-400", "overall": {"count": 1, "micro_cer": 0.21, "mean_cer": 0.20}},
         ]
 
         best = select_best_candidate(summaries, "mean_cer")
 
         self.assertEqual(best["name"], "checkpoint-400")
+
+    def test_best_candidate_rejects_all_failed_candidates(self) -> None:
+        summaries = [
+            {
+                "name": "checkpoint-400",
+                "failed_count": 2,
+                "overall": {"count": 0, "micro_cer": None},
+            },
+            {
+                "name": "checkpoint-500",
+                "failed_count": 2,
+                "overall": {"count": 0, "micro_cer": None},
+            },
+        ]
+
+        with self.assertRaisesRegex(ValueError, "No candidate has both"):
+            select_best_candidate(summaries, "micro_cer")
+
+    def test_best_candidate_ignores_failed_candidate_when_another_is_valid(self) -> None:
+        summaries = [
+            {"name": "checkpoint-400", "overall": {"count": 0, "micro_cer": 0.0}},
+            {"name": "checkpoint-450", "overall": {"count": 1, "micro_cer": float("nan")}},
+            {"name": "checkpoint-500", "overall": {"count": 2, "micro_cer": 0.25}},
+        ]
+
+        best = select_best_candidate(summaries, "micro_cer")
+
+        self.assertEqual(best["name"], "checkpoint-500")
+
+    def test_best_candidate_rejects_missing_and_non_finite_primary_metrics(self) -> None:
+        summaries = [
+            {"name": "missing", "overall": {"count": 1}},
+            {"name": "nan", "overall": {"count": 1, "micro_cer": float("nan")}},
+            {"name": "infinite", "overall": {"count": 1, "micro_cer": float("inf")}},
+        ]
+
+        with self.assertRaisesRegex(ValueError, "finite 'micro_cer'"):
+            select_best_candidate(summaries, "micro_cer")
+
+    def test_total_failure_writes_details_and_failed_summary_before_raising(self) -> None:
+        import json
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            candidate = root / "checkpoint-400"
+            output_dir = root / "probes"
+            config = ProbeConfig(
+                run_dir=root,
+                base_model="openai/whisper-large-v3",
+                dataset_dir=root / "dataset",
+                output_dir=output_dir,
+            )
+            failed_detail = {
+                "candidate": candidate.name,
+                "status": "failed",
+                "error": "RuntimeError('out of memory')",
+            }
+
+            with (
+                patch(
+                    "daiya_whisper_lora.checkpoint_probe.discover_candidates",
+                    return_value=[candidate],
+                ),
+                patch(
+                    "daiya_whisper_lora.checkpoint_probe.load_probe_rows",
+                    return_value=[{"reference": "hello"}],
+                ),
+                patch(
+                    "daiya_whisper_lora.checkpoint_probe.score_candidate",
+                    return_value=[failed_detail],
+                ),
+                patch("daiya_whisper_lora.checkpoint_probe.release_model_memory"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "Inspect per-sample errors"):
+                    run_probe(config)
+
+            details_paths = list(output_dir.glob("details_*.jsonl"))
+            summary_paths = list(output_dir.glob("summary_*.json"))
+            self.assertEqual(len(details_paths), 1)
+            self.assertEqual(len(summary_paths), 1)
+            self.assertIn("out of memory", details_paths[0].read_text(encoding="utf-8"))
+            summary = json.loads(summary_paths[0].read_text(encoding="utf-8"))
+            self.assertEqual(summary["status"], "failed")
+            self.assertIsNone(summary["selected_checkpoint"])
+            self.assertEqual(summary["candidates"][0]["scored_count"], 0)
+            self.assertEqual(summary["candidates"][0]["failed_count"], 1)
 
     def test_metric_delta_reports_selected_minus_final(self) -> None:
         selected = {"overall": {"micro_cer": 0.21}}

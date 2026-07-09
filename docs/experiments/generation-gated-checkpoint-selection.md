@@ -53,6 +53,8 @@ Expected files:
 - JSON summary for the probe run.
 - JSONL per-checkpoint/per-sample details for inspection and QA.
 
+Only candidates with at least one successfully scored row and a finite primary metric are eligible for selection. A completely failed probe still writes both artifacts: the JSON summary has `status: failed`, no selected checkpoint, and candidate attempted/scored/failed status counts; the JSONL preserves per-sample errors. The command then exits with an actionable error pointing to both paths.
+
 Primary selection metric:
 
 - `micro_cer`

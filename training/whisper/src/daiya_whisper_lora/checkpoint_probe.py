@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import gc
 import json
+import math
 import re
 import sys
 import time
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -77,22 +79,38 @@ def run_probe(config: ProbeConfig) -> dict[str, Any]:
     candidate_summaries: list[dict[str, Any]] = []
     for candidate in candidates:
         print(f"Probing {candidate.name} on {len(probe_rows)} samples...")
-        details = score_candidate(candidate, probe_rows, config)
-        release_model_memory()
+        try:
+            details = score_candidate(candidate, probe_rows, config)
+        except Exception as exc:
+            details = [
+                {
+                    "candidate": candidate.name,
+                    "candidate_path": str(candidate.resolve()),
+                    "status": "candidate_failed",
+                    "phase": "candidate_setup",
+                    "error": repr(exc),
+                }
+            ]
+        finally:
+            release_model_memory()
         all_details.extend(details)
         scored_summary = summarize_scored_rows(details, config.short_utterance_seconds)
+        status_counts = Counter(str(detail.get("status", "unknown")) for detail in details)
         candidate_summaries.append(
             {
                 "name": candidate.name,
                 "path": str(candidate.resolve()),
+                "attempted_count": len(details),
+                "scored_count": scored_summary["overall"]["count"],
+                "failed_count": len(details) - scored_summary["overall"]["count"],
+                "status_counts": dict(sorted(status_counts.items())),
                 **scored_summary,
             }
         )
 
-    best = select_best_candidate(candidate_summaries, config.primary_metric)
     final_summary = next((item for item in candidate_summaries if item["path"] == str(config.run_dir.resolve())), None)
     summary = {
-        "status": "ok",
+        "status": "pending_selection",
         "run_id": run_id,
         "started_at": started_at,
         "elapsed_seconds": time.perf_counter() - started,
@@ -103,9 +121,9 @@ def run_probe(config: ProbeConfig) -> dict[str, Any]:
         "details_path": str(details_path.resolve()),
         "summary_path": str(summary_path.resolve()),
         "primary_metric": config.primary_metric,
-        "selected_checkpoint": best,
+        "selected_checkpoint": None,
         "final_adapter": final_summary,
-        "selected_vs_final_delta": metric_delta(best, final_summary, config.primary_metric),
+        "selected_vs_final_delta": None,
         "probe": {
             "split": config.split,
             "max_samples": config.max_samples,
@@ -128,6 +146,25 @@ def run_probe(config: ProbeConfig) -> dict[str, Any]:
         "candidates": candidate_summaries,
     }
     write_jsonl(details_path, all_details)
+    try:
+        best = select_best_candidate(candidate_summaries, config.primary_metric)
+    except ValueError as exc:
+        summary["status"] = "failed"
+        summary["failure"] = {
+            "reason": str(exc),
+            "candidate_status": candidate_selection_status(candidate_summaries, config.primary_metric),
+        }
+        write_json(summary_path, summary)
+        message = (
+            f"{exc} Inspect per-sample errors in {details_path.resolve()} "
+            f"and the failure summary in {summary_path.resolve()}."
+        )
+        print(message, file=sys.stderr)
+        raise RuntimeError(message) from exc
+
+    summary["status"] = "ok"
+    summary["selected_checkpoint"] = best
+    summary["selected_vs_final_delta"] = metric_delta(best, final_summary, config.primary_metric)
     write_json(summary_path, summary)
     print(f"Details: {details_path}")
     print(f"Summary: {summary_path}")
@@ -434,17 +471,64 @@ def select_best_candidate(candidate_summaries: list[dict[str, Any]], primary_met
     if not candidate_summaries:
         raise ValueError("No candidate summaries to select from.")
 
+    eligible = [
+        summary
+        for summary in candidate_summaries
+        if candidate_has_scored_rows(summary)
+        and is_finite_metric(summary.get("overall", {}).get(primary_metric))
+    ]
+    if not eligible:
+        statuses = candidate_selection_status(candidate_summaries, primary_metric)
+        raise ValueError(
+            f"No candidate has both a finite {primary_metric!r} value and at least one scored row. "
+            f"Candidate status: {json.dumps(statuses, sort_keys=True)}."
+        )
+
     def sort_key(summary: dict[str, Any]) -> tuple[float, float, str]:
         overall = summary["overall"]
         primary = metric_or_infinity(overall.get(primary_metric))
         secondary = metric_or_infinity(overall.get("micro_cer"))
         return primary, secondary, str(summary["name"])
 
-    return min(candidate_summaries, key=sort_key)
+    return min(eligible, key=sort_key)
+
+
+def candidate_has_scored_rows(summary: dict[str, Any]) -> bool:
+    count = summary.get("overall", {}).get("count")
+    return isinstance(count, int) and not isinstance(count, bool) and count > 0
+
+
+def candidate_selection_status(
+    candidate_summaries: list[dict[str, Any]],
+    primary_metric: str,
+) -> list[dict[str, Any]]:
+    statuses = []
+    for summary in candidate_summaries:
+        metric_value = summary.get("overall", {}).get(primary_metric)
+        statuses.append(
+            {
+                "name": summary.get("name"),
+                "attempted_count": summary.get("attempted_count"),
+                "scored_count": summary.get(
+                    "scored_count",
+                    summary.get("overall", {}).get("count", 0),
+                ),
+                "failed_count": summary.get("failed_count"),
+                "status_counts": summary.get("status_counts", {}),
+                "primary_metric": primary_metric,
+                "primary_metric_value": metric_value,
+                "eligible": candidate_has_scored_rows(summary) and is_finite_metric(metric_value),
+            }
+        )
+    return statuses
+
+
+def is_finite_metric(value: Any) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(float(value))
 
 
 def metric_or_infinity(value: Any) -> float:
-    if isinstance(value, int | float):
+    if is_finite_metric(value):
         return float(value)
     return float("inf")
 
@@ -458,7 +542,7 @@ def metric_delta(
         return None
     selected_value = selected["overall"].get(primary_metric)
     final_value = final["overall"].get(primary_metric)
-    if not isinstance(selected_value, int | float) or not isinstance(final_value, int | float):
+    if not is_finite_metric(selected_value) or not is_finite_metric(final_value):
         return {"selected_minus_final": None}
     return {"selected_minus_final": selected_value - final_value}
 

@@ -88,4 +88,4 @@ Probe summaries and per-sample details are written under:
 training/whisper/runs/checkpoint_probes
 ```
 
-The summary names the selected checkpoint by `micro_cer` and includes the selected-vs-final adapter delta when the final adapter is present.
+The summary names the selected checkpoint by `micro_cer` and includes the selected-vs-final adapter delta when the final adapter is present. Selection only considers candidates with at least one scored row and a finite primary metric. If every candidate is invalid, the command exits with an error after writing per-sample details and a `status: failed` summary with candidate failure counts.
