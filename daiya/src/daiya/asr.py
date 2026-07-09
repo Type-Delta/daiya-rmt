@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import Iterable
@@ -12,6 +13,37 @@ from .mux import ASRSegment, WordTimestamp
 
 class ASRUnavailableError(RuntimeError):
     """Raised when an optional ASR backend is requested but not installed/configured."""
+
+
+DECODING_POLICIES = ("baseline", "short_beam", "short_greedy")
+DEFAULT_SHORT_UTTERANCE_SECONDS = 3.0
+
+
+def validate_decoding_policy(policy: str, short_utterance_seconds: float) -> None:
+    if policy not in DECODING_POLICIES:
+        choices = ", ".join(DECODING_POLICIES)
+        raise ValueError(f"unknown ASR decoding policy {policy!r}; expected one of: {choices}")
+    if not math.isfinite(short_utterance_seconds) or short_utterance_seconds <= 0:
+        raise ValueError("ASR short-utterance threshold must be finite and greater than zero")
+
+
+def decoder_options_for_duration(
+    policy: str,
+    duration: float,
+    *,
+    short_utterance_seconds: float = DEFAULT_SHORT_UTTERANCE_SECONDS,
+) -> dict[str, object]:
+    """Return fresh faster-whisper options for one original utterance."""
+    validate_decoding_policy(policy, short_utterance_seconds)
+    # Sparse fallback ladder: short-loop failures need ~0.8 to recover, while
+    # intermediate rungs add full decode passes without helping observed clips.
+    options: dict[str, object] = {"temperature": [0.0, 0.8, 1.0]}
+    if duration <= short_utterance_seconds:
+        if policy == "short_beam":
+            options.update(beam_size=8, patience=1.2)
+        elif policy == "short_greedy":
+            options.update(beam_size=1, best_of=1)
+    return options
 
 
 @dataclass(frozen=True)
@@ -126,6 +158,8 @@ class FasterWhisperASR:
         compute_type: str = "int8_float16",
         language: str | None = None,
         initial_prompt: str | None = None,
+        decoding_policy: str = "baseline",
+        short_utterance_seconds: float = DEFAULT_SHORT_UTTERANCE_SECONDS,
     ) -> None:
         if not model_path:
             raise ASRUnavailableError("faster-whisper model_path is required")
@@ -139,6 +173,9 @@ class FasterWhisperASR:
         self.model_path = model_path
         self.language = language
         self.initial_prompt = initial_prompt
+        validate_decoding_policy(decoding_policy, short_utterance_seconds)
+        self.decoding_policy = decoding_policy
+        self.short_utterance_seconds = short_utterance_seconds
         try:
             self._model = WhisperModel(model_path, device=device, compute_type=compute_type)
         except Exception as exc:
@@ -154,17 +191,18 @@ class FasterWhisperASR:
         audio = ensure_mono_float32(utterance.samples)
         if audio.size == 0:
             return []
+        decoder_options = decoder_options_for_duration(
+            self.decoding_policy,
+            utterance.duration,
+            short_utterance_seconds=self.short_utterance_seconds,
+        )
         segments, _info = self._model.transcribe(
             audio,
             language=language or self.language,
             initial_prompt=initial_prompt or self.initial_prompt,
             word_timestamps=True,
             vad_filter=False,
-            # ponytail: sparse temperature ladder instead of the default 6-rung one.
-            # Degenerate greedy loops on short utterances need temp ~0.8 to recover;
-            # the intermediate rungs (0.2-0.6) never rescue, they just add full decode
-            # passes (~16s stall on a 1s clip). Normal clips never leave temp 0.
-            temperature=[0.0, 0.8, 1.0],
+            **decoder_options,
         )
         return list(_convert_fw_segments(segments, offset=utterance.start))
 

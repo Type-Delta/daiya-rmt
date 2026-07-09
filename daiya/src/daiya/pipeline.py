@@ -5,7 +5,14 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from .asr import ASRUnavailableError, FasterWhisperASR, NullASR, create_utterance_segmenter
+from .asr import (
+    ASRUnavailableError,
+    DEFAULT_SHORT_UTTERANCE_SECONDS,
+    FasterWhisperASR,
+    NullASR,
+    create_utterance_segmenter,
+    validate_decoding_policy,
+)
 from .audio import PCMChunk
 from .correct import NoOpCorrectionStage
 from .diarizer import DiarizerConfig, create_diarizer
@@ -21,6 +28,8 @@ class PipelineConfig:
     asr_compute_type: str = "int8_float16"
     language: str | None = None
     initial_prompt: str | None = None
+    asr_decoding_policy: str = "baseline"
+    asr_short_utterance_seconds: float = DEFAULT_SHORT_UTTERANCE_SECONDS
     vad_threshold: float = 0.012
     utterance_cap_seconds: float = 8.0
     diarization_profile: str = "balanced"
@@ -31,6 +40,9 @@ class PipelineConfig:
     latency_seconds: float | None = None
     commit_delay_seconds: float | None = None
     match_threshold: float | None = None
+
+    def __post_init__(self) -> None:
+        validate_decoding_policy(self.asr_decoding_policy, self.asr_short_utterance_seconds)
 
 
 class StreamingPipeline:
@@ -124,6 +136,8 @@ class StreamingPipeline:
                 compute_type=self.config.asr_compute_type,
                 language=self.config.language,
                 initial_prompt=self.config.initial_prompt,
+                decoding_policy=self.config.asr_decoding_policy,
+                short_utterance_seconds=self.config.asr_short_utterance_seconds,
             )
         except ASRUnavailableError as exc:
             return NullASR(str(exc))
@@ -197,6 +211,14 @@ def _with_runtime_defaults(config: PipelineConfig) -> PipelineConfig:
         updates["language"] = os.getenv("DAIYA_ASR_LANGUAGE") or None
     if config.initial_prompt is None:
         updates["initial_prompt"] = os.getenv("DAIYA_ASR_INITIAL_PROMPT") or None
+    if config.asr_decoding_policy == "baseline":
+        updates["asr_decoding_policy"] = os.getenv(
+            "DAIYA_ASR_DECODING_POLICY", config.asr_decoding_policy
+        )
+    if config.asr_short_utterance_seconds == DEFAULT_SHORT_UTTERANCE_SECONDS:
+        configured_threshold = os.getenv("DAIYA_ASR_SHORT_UTTERANCE_SECONDS")
+        if configured_threshold:
+            updates["asr_short_utterance_seconds"] = float(configured_threshold)
     configured_diarization_backend = os.getenv("DAIYA_DIARIZATION_BACKEND")
     if configured_diarization_backend and config.diarization_backend == "auto":
         updates["diarization_backend"] = configured_diarization_backend

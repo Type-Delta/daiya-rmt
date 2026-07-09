@@ -263,6 +263,7 @@ def _config_from_dict(data: dict[str, Any]) -> PipelineConfig:
         "latency_seconds",
         "commit_delay_seconds",
         "match_threshold",
+        "asr_short_utterance_seconds",
     ):
         if key in filtered:
             filtered[key] = float(filtered[key])
@@ -272,6 +273,7 @@ def _config_from_dict(data: dict[str, Any]) -> PipelineConfig:
         "asr_compute_type",
         "language",
         "initial_prompt",
+        "asr_decoding_policy",
         "diarization_profile",
         "diarization_backend",
     ):

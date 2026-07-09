@@ -21,8 +21,21 @@ from typing import Any, Iterable
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+DAIYA_SRC = REPO_ROOT / "daiya" / "src"
+if str(DAIYA_SRC) not in sys.path:
+    sys.path.insert(0, str(DAIYA_SRC))
+
+from daiya.asr import DECODING_POLICIES, decoder_options_for_duration
+
 DEFAULT_DATASET_DIR = REPO_ROOT / "training" / "dataset" / "hf_datasets" / "whisper"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "lab" / "artifacts" / "asr_eval"
+DURATION_BUCKETS = (
+    ("lt_2s", 0.0, 2.0),
+    ("2_to_lt_3s", 2.0, 3.0),
+    ("3_to_lt_5s", 3.0, 5.0),
+    ("5_to_lt_10s", 5.0, 10.0),
+    ("gte_10s", 10.0, math.inf),
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -53,11 +66,40 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--beam-size", type=int, default=5, help="Beam size passed to transcribe().")
     parser.add_argument(
+        "--decoding-policy",
+        choices=DECODING_POLICIES,
+        default="baseline",
+        help="Duration-aware decoder experiment; baseline matches runtime decoding.",
+    )
+    parser.add_argument(
+        "--short-utterance-seconds",
+        type=float,
+        default=3.0,
+        help="Inclusive duration threshold for policy selection and short metrics.",
+    )
+    parser.add_argument(
         "--no-condition-on-previous-text",
         action="store_true",
         help="Disable conditioning on previous text for independent chunk scoring.",
     )
     return parser.parse_args()
+
+
+def applied_decoder_options(
+    args: argparse.Namespace, duration_seconds: float | None
+) -> dict[str, Any]:
+    options: dict[str, Any] = {
+        "beam_size": args.beam_size,
+        "condition_on_previous_text": not args.no_condition_on_previous_text,
+    }
+    options.update(
+        decoder_options_for_duration(
+            args.decoding_policy,
+            math.inf if duration_seconds is None else float(duration_seconds),
+            short_utterance_seconds=args.short_utterance_seconds,
+        )
+    )
+    return options
 
 
 def utc_stamp() -> str:
@@ -290,6 +332,53 @@ def nan_safe_mean(values: list[float | None]) -> float | None:
     return sum(real_values) / len(real_values)
 
 
+def aggregate_metric_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    audio_seconds = sum(float(row.get("speech_duration") or 0.0) for row in rows)
+    inference_seconds = sum(
+        float(row.get("transcribe", {}).get("elapsed_seconds") or 0.0) for row in rows
+    )
+    cer_distance = sum(row["metrics"]["cer_distance"] for row in rows)
+    cer_length = sum(row["metrics"]["cer_reference_length"] for row in rows)
+    word_distance = sum(row["metrics"]["wer_like_distance"] for row in rows)
+    word_length = sum(row["metrics"]["wer_like_reference_length"] for row in rows)
+    return {
+        "count": len(rows),
+        "audio_seconds": audio_seconds,
+        "inference_seconds": inference_seconds,
+        "real_time_factor": inference_seconds / audio_seconds if audio_seconds else None,
+        "mean_cer": nan_safe_mean([row["metrics"]["cer"] for row in rows]),
+        "micro_cer": error_rate(cer_distance, cer_length),
+        "mean_cer_no_space": nan_safe_mean(
+            [row["metrics"]["cer_no_space"] for row in rows]
+        ),
+        "mean_wer_like": nan_safe_mean([row["metrics"]["wer_like"] for row in rows]),
+        "micro_wer_like": error_rate(word_distance, word_length),
+    }
+
+
+def duration_bucket_name(duration: float | None) -> str | None:
+    if duration is None:
+        return None
+    value = float(duration)
+    return next(
+        (name for name, lower, upper in DURATION_BUCKETS if lower <= value < upper),
+        None,
+    )
+
+
+def duration_bucket_summaries(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {
+        name: aggregate_metric_rows(
+            [
+                row
+                for row in rows
+                if duration_bucket_name(row.get("speech_duration")) == name
+            ]
+        )
+        for name, _lower, _upper in DURATION_BUCKETS
+    }
+
+
 def build_summary(
     *,
     args: argparse.Namespace,
@@ -305,6 +394,12 @@ def build_summary(
 ) -> dict[str, Any]:
     scored = [row for row in details if row.get("status") == "ok"]
     failures = [row for row in details if row.get("status") != "ok"]
+    overall = aggregate_metric_rows(scored)
+    short_rows = [
+        row
+        for row in scored
+        if float(row.get("speech_duration") or math.inf) <= args.short_utterance_seconds
+    ]
     aggregate_distance = sum(row["metrics"]["cer_distance"] for row in scored)
     aggregate_length = sum(row["metrics"]["cer_reference_length"] for row in scored)
     aggregate_word_distance = sum(row["metrics"]["wer_like_distance"] for row in scored)
@@ -325,9 +420,16 @@ def build_summary(
         "language": args.language,
         "initial_prompt": args.initial_prompt,
         "beam_size": args.beam_size,
+        "decoding_policy": args.decoding_policy,
+        "decoder_config": {
+            "baseline": applied_decoder_options(args, None),
+            "short": applied_decoder_options(args, args.short_utterance_seconds),
+        },
         "condition_on_previous_text": not args.no_condition_on_previous_text,
+        "short_utterance_seconds": args.short_utterance_seconds,
         "dataset_dir": str(args.dataset_dir.resolve()),
         "output_dir": str(args.output_dir.resolve()),
+        "limit": args.limit,
         "details_path": str(details_path.resolve()),
         "summary_path": str(summary_path.resolve()),
         "rows_seen": rows_seen,
@@ -338,6 +440,9 @@ def build_summary(
         "mean_cer_no_space": nan_safe_mean([row["metrics"]["cer_no_space"] for row in scored]),
         "mean_wer_like": nan_safe_mean([row["metrics"]["wer_like"] for row in scored]),
         "micro_wer_like": error_rate(aggregate_word_distance, aggregate_word_length),
+        "overall": overall,
+        "duration_buckets": duration_bucket_summaries(scored),
+        "short_utterance_subset": aggregate_metric_rows(short_rows),
         "prediction_non_thai_english_scripts": dict(sorted(script_counter.items())),
     }
     if failures:
@@ -345,14 +450,20 @@ def build_summary(
     return summary
 
 
-def transcribe_one(model: Any, audio_path: Path, args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
+def transcribe_one(
+    model: Any,
+    audio_path: Path,
+    args: argparse.Namespace,
+    *,
+    policy_duration_seconds: float | None = None,
+) -> tuple[str, dict[str, Any]]:
     started = time.perf_counter()
+    decoder_options = applied_decoder_options(args, policy_duration_seconds)
     segments, info = model.transcribe(
         str(audio_path),
         language=args.language,
         initial_prompt=args.initial_prompt,
-        beam_size=args.beam_size,
-        condition_on_previous_text=not args.no_condition_on_previous_text,
+        **decoder_options,
     )
     segment_rows = []
     text_parts = []
@@ -375,6 +486,7 @@ def transcribe_one(model: Any, audio_path: Path, args: argparse.Namespace) -> tu
         "language_probability": getattr(info, "language_probability", None),
         "duration": getattr(info, "duration", None),
         "duration_after_vad": getattr(info, "duration_after_vad", None),
+        "decoder_options": decoder_options,
         "segments": segment_rows,
     }
     return " ".join(text_parts), info_row
@@ -387,7 +499,7 @@ def main() -> int:
 
     started_at = datetime.now(timezone.utc).isoformat()
     started = time.perf_counter()
-    run_id = f"{utc_stamp()}_{safe_name(args.model)}"
+    run_id = f"{utc_stamp()}_{safe_name(args.model)}_{safe_name(args.decoding_policy)}"
     details_path = args.output_dir / f"details_{run_id}.jsonl"
     summary_path = args.output_dir / f"summary_{run_id}.json"
 
@@ -462,7 +574,12 @@ def main() -> int:
             continue
 
         try:
-            prediction, transcribe_info = transcribe_one(model, audio_path, args)
+            prediction, transcribe_info = transcribe_one(
+                model,
+                audio_path,
+                args,
+                policy_duration_seconds=record.get("speech_duration"),
+            )
             detail = {
                 **base_detail,
                 "status": "ok",
