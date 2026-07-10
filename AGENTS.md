@@ -54,3 +54,7 @@ This research aims to answer the following questions:
 4. [ ] What is more efficient between using 2 vs 3 pass transcription, or is there a better way?
 5. [ ] What is the best LLM model for verifying and correcting transcription results, that is fast and accurate enough for this task?
 6. [ ] What is the best segment size for streaming transcription, that doesn't compromise the accuracy of Speaker Diarization while still providing low-latency transcription?
+
+## Working on this project
+
+- When training the models, spawn a training process completely isolated from the harness, so the training process can continue running even if the harness is restarted or killed. To monitor the training process, use a separate process tied to the harness that can monitor the training process and report its status back once the traning has reached a certain milestone/killed or completed. Never monitor the training directly yourself.
