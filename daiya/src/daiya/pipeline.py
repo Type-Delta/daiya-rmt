@@ -24,7 +24,11 @@ class PipelineConfig:
     asr_compute_type: str = "int8_float16"
     language: str | None = None
     initial_prompt: str | None = None
-    vad_threshold: float = 0.012
+    segmenter_backend: str = "energy"
+    vad_threshold: float | None = None
+    vad_min_speech_seconds: float = 0.25
+    vad_min_silence_seconds: float = 0.45
+    vad_speech_padding_seconds: float | None = None
     utterance_cap_seconds: float = 8.0
     diarization_profile: str = "balanced"
     diarization_backend: str = "auto"
@@ -58,8 +62,20 @@ class StreamingPipeline:
         self.mux = TranscriptMultiplexer()
         self.segmenter = (
             create_utterance_segmenter(
-                threshold=self.config.vad_threshold,
+                backend=self.config.segmenter_backend,
+                min_speech_seconds=self.config.vad_min_speech_seconds,
+                min_silence_seconds=self.config.vad_min_silence_seconds,
                 max_utterance_seconds=self.config.utterance_cap_seconds,
+                **(
+                    {"threshold": self.config.vad_threshold}
+                    if self.config.vad_threshold is not None
+                    else {}
+                ),
+                **(
+                    {"speech_padding_seconds": self.config.vad_speech_padding_seconds}
+                    if self.config.vad_speech_padding_seconds is not None
+                    else {}
+                ),
             )
             if self.config.enable_asr
             else None
@@ -401,6 +417,9 @@ def _with_runtime_defaults(config: PipelineConfig) -> PipelineConfig:
         updates["language"] = os.getenv("DAIYA_ASR_LANGUAGE") or None
     if config.initial_prompt is None:
         updates["initial_prompt"] = os.getenv("DAIYA_ASR_INITIAL_PROMPT") or None
+    configured_segmenter_backend = os.getenv("DAIYA_SEGMENTER_BACKEND")
+    if configured_segmenter_backend and config.segmenter_backend == "energy":
+        updates["segmenter_backend"] = configured_segmenter_backend
     configured_diarization_backend = os.getenv("DAIYA_DIARIZATION_BACKEND")
     if configured_diarization_backend and config.diarization_backend == "auto":
         updates["diarization_backend"] = configured_diarization_backend

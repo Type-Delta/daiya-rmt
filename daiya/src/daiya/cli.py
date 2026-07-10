@@ -49,6 +49,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--asr-left-context-seconds", type=float, default=3.0)
     parser.add_argument("--asr-tiny-utterance-seconds", type=float, default=0.55)
     parser.add_argument("--asr-delayed-correction-window-seconds", type=float, default=10.0)
+        "--segmenter-backend",
+        choices=("energy", "silero", "auto"),
+        default="energy",
+        help="Utterance segmentation backend. Defaults to dependency-free energy VAD.",
+    )
+    parser.add_argument(
+        "--vad-threshold",
+        type=float,
+        default=None,
+        help="VAD threshold. Defaults to 0.012 for energy and 0.5 for Silero.",
+    )
+    parser.add_argument("--vad-min-speech-seconds", type=float, default=0.25)
+    parser.add_argument("--vad-min-silence-seconds", type=float, default=0.45)
+    parser.add_argument(
+        "--vad-speech-padding-seconds",
+        type=float,
+        default=None,
+        help="Speech padding. Defaults to 0 for energy and 0.1 seconds for Silero.",
+    )
+    parser.add_argument("--utterance-cap-seconds", type=float, default=8.0)
     parser.add_argument(
         "--diarization-backend",
         choices=("auto", "null"),
@@ -69,6 +89,12 @@ async def run(args: argparse.Namespace) -> int:
             asr_compute_type=args.compute_type,
             language=args.language,
             initial_prompt=args.initial_prompt,
+            segmenter_backend=args.segmenter_backend,
+            vad_threshold=args.vad_threshold,
+            vad_min_speech_seconds=args.vad_min_speech_seconds,
+            vad_min_silence_seconds=args.vad_min_silence_seconds,
+            vad_speech_padding_seconds=args.vad_speech_padding_seconds,
+            utterance_cap_seconds=args.utterance_cap_seconds,
             diarization_backend=args.diarization_backend,
             asr_prompt_memory_enabled=not args.no_asr_prompt_memory,
             asr_left_context_enabled=args.asr_left_context,
