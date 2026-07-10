@@ -27,6 +27,29 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--language", default=None, help="Optional ASR language hint.")
     parser.add_argument("--initial-prompt", default=None, help="Optional ASR prompt/context.")
     parser.add_argument(
+        "--no-asr-prompt-memory",
+        action="store_true",
+        help="Disable rolling transcript/term context in the ASR initial_prompt.",
+    )
+    parser.add_argument(
+        "--asr-left-context",
+        action="store_true",
+        help="Enable experimental left-audio context retries for short or low-confidence utterances.",
+    )
+    parser.add_argument(
+        "--asr-delayed-correction",
+        action="store_true",
+        help="Enable experimental rolling-window ASR correction updates.",
+    )
+    parser.add_argument(
+        "--asr-tiny-merge",
+        action="store_true",
+        help="Enable experimental tiny VAD utterance deferral/merge before ASR.",
+    )
+    parser.add_argument("--asr-left-context-seconds", type=float, default=3.0)
+    parser.add_argument("--asr-tiny-utterance-seconds", type=float, default=0.55)
+    parser.add_argument("--asr-delayed-correction-window-seconds", type=float, default=10.0)
+    parser.add_argument(
         "--diarization-backend",
         choices=("auto", "null"),
         default="auto",
@@ -47,6 +70,13 @@ async def run(args: argparse.Namespace) -> int:
             language=args.language,
             initial_prompt=args.initial_prompt,
             diarization_backend=args.diarization_backend,
+            asr_prompt_memory_enabled=not args.no_asr_prompt_memory,
+            asr_left_context_enabled=args.asr_left_context,
+            asr_delayed_correction_enabled=args.asr_delayed_correction,
+            asr_tiny_utterance_merge_enabled=args.asr_tiny_merge,
+            asr_left_context_seconds=args.asr_left_context_seconds,
+            asr_tiny_utterance_seconds=args.asr_tiny_utterance_seconds,
+            asr_delayed_correction_window_seconds=args.asr_delayed_correction_window_seconds,
         )
     )
     source = FileReplayAudioSource(

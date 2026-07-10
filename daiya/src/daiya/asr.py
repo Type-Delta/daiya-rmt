@@ -150,14 +150,27 @@ class FasterWhisperASR:
         *,
         language: str | None = None,
         initial_prompt: str | None = None,
+        left_context_samples: np.ndarray | None = None,
     ) -> list[ASRSegment]:
-        audio = ensure_mono_float32(utterance.samples)
-        if audio.size == 0:
+        utterance_audio = ensure_mono_float32(utterance.samples)
+        if utterance_audio.size == 0:
             return []
+        audio = utterance_audio
+        offset = utterance.start
+        clip_start: float | None = None
+        clip_end: float | None = None
+        if left_context_samples is not None:
+            left_context = ensure_mono_float32(left_context_samples)
+            if left_context.size:
+                audio = np.concatenate([left_context, utterance_audio])
+                left_context_duration = left_context.size / SAMPLE_RATE
+                offset = utterance.start - left_context_duration
+                clip_start = utterance.start
+                clip_end = utterance.end
         segments, _info = self._model.transcribe(
             audio,
-            language=language or self.language,
-            initial_prompt=initial_prompt or self.initial_prompt,
+            language=self.language if language is None else language,
+            initial_prompt=self.initial_prompt if initial_prompt is None else initial_prompt,
             word_timestamps=True,
             vad_filter=False,
             # ponytail: sparse temperature ladder instead of the default 6-rung one.
@@ -166,7 +179,7 @@ class FasterWhisperASR:
             # passes (~16s stall on a 1s clip). Normal clips never leave temp 0.
             temperature=[0.0, 0.8, 1.0],
         )
-        return list(_convert_fw_segments(segments, offset=utterance.start))
+        return list(_convert_fw_segments(segments, offset=offset, clip_start=clip_start, clip_end=clip_end))
 
 
 class NullASR:
@@ -194,18 +207,63 @@ def normalize_thai_spacing(text: str) -> str:
     return _THAI_GAP.sub("", text)
 
 
-def _convert_fw_segments(segments: Iterable[object], *, offset: float) -> Iterable[ASRSegment]:
+def is_low_confidence_segment(
+    segment: ASRSegment,
+    *,
+    min_avg_logprob: float = -1.0,
+    min_word_probability: float = 0.5,
+) -> bool:
+    """Return True when a decoded segment is a likely candidate for correction."""
+    if segment.confidence is not None and segment.confidence < min_avg_logprob:
+        return True
+    probabilities = [word.probability for word in segment.words if word.probability is not None]
+    return bool(probabilities) and min(probabilities) < min_word_probability
+
+
+def low_confidence_words(
+    segment: ASRSegment,
+    *,
+    min_word_probability: float = 0.5,
+) -> tuple[WordTimestamp, ...]:
+    return tuple(
+        word
+        for word in segment.words
+        if word.probability is not None and word.probability < min_word_probability
+    )
+
+
+def _convert_fw_segments(
+    segments: Iterable[object],
+    *,
+    offset: float,
+    clip_start: float | None = None,
+    clip_end: float | None = None,
+) -> Iterable[ASRSegment]:
     for segment in segments:
         start = offset + float(getattr(segment, "start", 0.0))
         end = offset + float(getattr(segment, "end", 0.0))
+        if clip_start is not None and end <= clip_start:
+            continue
+        if clip_end is not None and start >= clip_end:
+            continue
+        start = max(start, clip_start) if clip_start is not None else start
+        end = min(end, clip_end) if clip_end is not None else end
         text = normalize_thai_spacing(str(getattr(segment, "text", "")).strip())
         words = []
         for word in getattr(segment, "words", None) or []:
+            word_start = offset + float(getattr(word, "start", 0.0))
+            word_end = offset + float(getattr(word, "end", 0.0))
+            if clip_start is not None and word_end <= clip_start:
+                continue
+            if clip_end is not None and word_start >= clip_end:
+                continue
+            word_start = max(word_start, clip_start) if clip_start is not None else word_start
+            word_end = min(word_end, clip_end) if clip_end is not None else word_end
             words.append(
                 WordTimestamp(
                     word=str(getattr(word, "word", "")).strip(),
-                    start=offset + float(getattr(word, "start", 0.0)),
-                    end=offset + float(getattr(word, "end", 0.0)),
+                    start=word_start,
+                    end=word_end,
                     probability=getattr(word, "probability", None),
                 )
             )

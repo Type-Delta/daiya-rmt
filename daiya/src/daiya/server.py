@@ -263,9 +263,19 @@ def _config_from_dict(data: dict[str, Any]) -> PipelineConfig:
         "latency_seconds",
         "commit_delay_seconds",
         "match_threshold",
+        "asr_left_context_seconds",
+        "asr_left_context_short_utterance_seconds",
+        "asr_low_confidence_threshold",
+        "asr_delayed_correction_window_seconds",
+        "asr_tiny_utterance_seconds",
+        "asr_tiny_utterance_max_gap_seconds",
+        "asr_tiny_utterance_max_delay_seconds",
     ):
         if key in filtered:
             filtered[key] = float(filtered[key])
+    for key in ("asr_prompt_tail_chars", "asr_prompt_max_chars", "asr_prompt_max_terms"):
+        if key in filtered:
+            filtered[key] = int(filtered[key])
     for key in (
         "asr_model",
         "asr_device",
@@ -277,7 +287,14 @@ def _config_from_dict(data: dict[str, Any]) -> PipelineConfig:
     ):
         if key in filtered:
             filtered[key] = str(filtered[key])
-    for key in ("enable_asr", "enable_diarization"):
+    for key in (
+        "enable_asr",
+        "enable_diarization",
+        "asr_prompt_memory_enabled",
+        "asr_left_context_enabled",
+        "asr_delayed_correction_enabled",
+        "asr_tiny_utterance_merge_enabled",
+    ):
         if key in filtered:
             filtered[key] = str(filtered[key]).lower() not in {"0", "false", "no", "off"}
     return PipelineConfig(**filtered)
