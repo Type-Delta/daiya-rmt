@@ -640,6 +640,7 @@ def _clip_word(word: WordTimestamp, start: float, end: float) -> WordTimestamp:
         start=max(word.start, start),
         end=min(word.end, end),
         probability=word.probability,
+        speaker_id=word.speaker_id,
     )
 
 
