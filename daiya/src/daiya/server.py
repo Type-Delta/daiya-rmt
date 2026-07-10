@@ -256,6 +256,9 @@ def _config_from_dict(data: dict[str, Any]) -> PipelineConfig:
     filtered = {key: value for key, value in data.items() if key in fields and value not in (None, "")}
     for key in (
         "vad_threshold",
+        "vad_min_speech_seconds",
+        "vad_min_silence_seconds",
+        "vad_speech_padding_seconds",
         "utterance_cap_seconds",
         "diarization_commit_delay_seconds",
         "window_seconds",
@@ -272,6 +275,7 @@ def _config_from_dict(data: dict[str, Any]) -> PipelineConfig:
         "asr_compute_type",
         "language",
         "initial_prompt",
+        "segmenter_backend",
         "diarization_profile",
         "diarization_backend",
     ):
