@@ -2,11 +2,21 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
-from daiya.asr import FasterWhisperASR, Utterance, is_low_confidence_segment, low_confidence_words
-from daiya.audio import SAMPLE_RATE
+from daiya.asr import (
+    ASRUnavailableError,
+    EnergyUtteranceSegmenter,
+    FasterWhisperASR,
+    SileroUtteranceSegmenter,
+    Utterance,
+    create_utterance_segmenter,
+    is_low_confidence_segment,
+    low_confidence_words,
+)
+from daiya.audio import SAMPLE_RATE, PCMChunk
 from daiya.mux import ASRSegment, WordTimestamp
 
 
@@ -32,6 +42,28 @@ def _asr_with_model(model: FakeWhisperModel, *, initial_prompt: str | None = "de
 def _utterance(duration_seconds: float = 1.0) -> Utterance:
     samples = np.ones(int(SAMPLE_RATE * duration_seconds), dtype=np.float32)
     return Utterance(samples=samples, start=10.0, end=10.0 + duration_seconds)
+
+
+class FakeVADIterator:
+    def __init__(self, events: dict[int, dict[str, int]] | None = None) -> None:
+        self.events = events or {}
+        self.calls: list[np.ndarray] = []
+        self.reset_count = 0
+
+    def __call__(
+        self,
+        samples: np.ndarray,
+        *,
+        return_seconds: bool = False,
+    ) -> dict[str, int] | None:
+        if return_seconds:
+            raise AssertionError("runtime must request sample timestamps")
+        self.calls.append(np.asarray(samples).copy())
+        return self.events.get(len(self.calls))
+
+    def reset_states(self) -> None:
+        self.reset_count += 1
+        self.calls = []
 
 
 class FasterWhisperASRTest(unittest.TestCase):
@@ -101,41 +133,6 @@ class FasterWhisperASRTest(unittest.TestCase):
 
         self.assertTrue(is_low_confidence_segment(segment))
         self.assertEqual([word.word for word in low_confidence_words(segment)], ["world"])
-import unittest
-from unittest.mock import patch
-
-import numpy as np
-
-from daiya.asr import (
-    ASRUnavailableError,
-    EnergyUtteranceSegmenter,
-    SileroUtteranceSegmenter,
-    Utterance,
-    create_utterance_segmenter,
-)
-from daiya.audio import SAMPLE_RATE, PCMChunk
-
-
-class FakeVADIterator:
-    def __init__(self, events: dict[int, dict[str, int]] | None = None) -> None:
-        self.events = events or {}
-        self.calls: list[np.ndarray] = []
-        self.reset_count = 0
-
-    def __call__(
-        self,
-        samples: np.ndarray,
-        *,
-        return_seconds: bool = False,
-    ) -> dict[str, int] | None:
-        if return_seconds:
-            raise AssertionError("runtime must request sample timestamps")
-        self.calls.append(np.asarray(samples).copy())
-        return self.events.get(len(self.calls))
-
-    def reset_states(self) -> None:
-        self.reset_count += 1
-        self.calls = []
 
 
 class UtteranceSegmenterTest(unittest.TestCase):

@@ -49,6 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--asr-left-context-seconds", type=float, default=3.0)
     parser.add_argument("--asr-tiny-utterance-seconds", type=float, default=0.55)
     parser.add_argument("--asr-delayed-correction-window-seconds", type=float, default=10.0)
+    parser.add_argument(
         "--segmenter-backend",
         choices=("energy", "silero", "auto"),
         default="energy",
