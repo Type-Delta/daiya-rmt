@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import evaluate
 import torch
 from datasets import Audio, Dataset, DatasetDict, load_dataset
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
@@ -20,6 +19,24 @@ from transformers import (
     WhisperForConditionalGeneration,
     WhisperProcessor,
 )
+
+from .metrics import aggregate_metric_rows, normalize_thai_spacing, text_metrics
+from .prompt_conditioning import (
+    PromptConditioningConfig,
+    build_decoder_inputs_and_labels,
+    build_prompt_text,
+    build_prompted_labels,
+    encode_prompt_token_ids,
+    parse_prompt_fields,
+    validate_prompt_config,
+)
+from .provenance import (
+    collect_run_provenance,
+    dataset_identity,
+    preprocessing_cache_key,
+    write_run_provenance,
+)
+from .split_manifest import SplitManifestIdentity, apply_split_manifest
 
 console = Console()
 
@@ -85,6 +102,12 @@ class TrainingConfig:
     resume_from_checkpoint: bool = False
     push_to_hub: bool = False
     hub_model_id: str | None = None
+    split_manifest: Path | None = None
+    prompt_conditioning: bool = False
+    prompt_max_tokens: int = 64
+    prompt_fields: tuple[str, ...] = ("context_before",)
+    prompt_terms_only: bool = True
+    prompt_allow_future_context: bool = False
 
 
 @dataclass
@@ -97,9 +120,49 @@ class DataCollatorSpeechSeq2SeqWithPadding:
 
         label_features = [{"input_ids": feature["labels"]} for feature in features]
         labels_batch = self.processor.tokenizer.pad(label_features, return_tensors="pt")
-        labels = labels_batch["input_ids"].masked_fill(labels_batch.attention_mask.ne(1), -100)
+        unmasked_labels = labels_batch["input_ids"]
+        labels = unmasked_labels.masked_fill(labels_batch.attention_mask.ne(1), -100)
 
-        if (labels[:, 0] == self.processor.tokenizer.bos_token_id).all().cpu().item():
+        prompt_label_lengths = [int(feature.get("prompt_label_length", 0) or 0) for feature in features]
+        # A prompt-conditioned dataset always carries prompt_label_length, even
+        # when a particular row has no usable terms. Route the entire batch
+        # through one shift path so supervision never depends on batch makeup.
+        if any("prompt_label_length" in feature for feature in features):
+            pad_token_id = self.processor.tokenizer.pad_token_id
+            decoder_input_ids: list[list[int]] = []
+            prompted_labels: list[list[int]] = []
+            for row, attention_mask, prompt_label_length in zip(
+                unmasked_labels.tolist(),
+                labels_batch.attention_mask.tolist(),
+                prompt_label_lengths,
+                strict=True,
+            ):
+                row_length = int(sum(attention_mask))
+                decoder_row, label_row = build_decoder_inputs_and_labels(
+                    row[:row_length],
+                    prompt_label_length=prompt_label_length,
+                    pad_token_id=pad_token_id,
+                )
+                padding_length = len(row) - row_length
+                decoder_input_ids.append([*decoder_row, *([pad_token_id] * padding_length)])
+                prompted_labels.append([*label_row, *([-100] * padding_length)])
+
+            batch["decoder_input_ids"] = torch.tensor(
+                decoder_input_ids,
+                dtype=unmasked_labels.dtype,
+                device=unmasked_labels.device,
+            )
+            batch["labels"] = torch.tensor(
+                prompted_labels,
+                dtype=labels.dtype,
+                device=labels.device,
+            )
+            return batch
+
+        decoder_start_token_id = getattr(self.processor.tokenizer, "decoder_start_token_id", None)
+        if decoder_start_token_id is None:
+            decoder_start_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|startoftranscript|>")
+        if decoder_start_token_id is not None and (labels[:, 0] == decoder_start_token_id).all().cpu().item():
             labels = labels[:, 1:]
 
         batch["labels"] = labels
@@ -171,22 +234,46 @@ def train(config: TrainingConfig) -> None:
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
     processor = load_processor(config)
-    dataset = prepare_dataset(config, processor)
+    dataset, manifest_identity = prepare_dataset_with_identity(config, processor)
+    provenance = collect_run_provenance(
+        config=config,
+        dataset_identity=dataset_identity(config.dataset_dir, manifest_identity),
+        prompt_strategy=prompt_strategy_payload(config),
+        base_model_revision=processor_revision(processor),
+    )
+    provenance["checkpoint_selection"] = {
+        "in_training_generation_context": "unprompted",
+        "authoritative_m3_1_selection": "post_hoc_prompted_probe",
+    }
+    write_run_provenance(config.output_dir / "run_provenance.json", provenance)
     model = load_lora_model(config)
 
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
     compute_metrics = None
     if config.predict_with_generate:
-        wer_metric = evaluate.load("wer")
-
         def compute_metrics(pred: Any) -> dict[str, float]:
             pred_ids = pred.predictions
             label_ids = pred.label_ids
             label_ids[label_ids == -100] = processor.tokenizer.pad_token_id
 
-            pred_str = processor.tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
+            pred_str = [
+                normalize_thai_spacing(text)
+                for text in processor.tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
+            ]
             label_str = processor.tokenizer.batch_decode(label_ids, skip_special_tokens=True)
-            return {"wer": 100 * wer_metric.compute(predictions=pred_str, references=label_str)}
+            metric_rows = [
+                {"metrics": text_metrics(reference, prediction)}
+                for reference, prediction in zip(label_str, pred_str, strict=True)
+            ]
+            metrics = aggregate_metric_rows(metric_rows)
+            return {
+                "micro_cer": percent(metrics["micro_cer"]),
+                "micro_cer_no_space": percent(metrics["micro_cer_no_space"]),
+                "micro_wer_like": percent(metrics["micro_wer_like"]),
+                "mean_cer": percent(metrics["mean_cer"]),
+                "mean_wer_like": percent(metrics["mean_wer_like"]),
+                "cer": percent(metrics["micro_cer"]),
+            }
 
     training_args = build_training_args(config)
 
@@ -256,12 +343,34 @@ def load_processor(config: TrainingConfig) -> WhisperProcessor:
 
 
 def prepare_dataset(config: TrainingConfig, processor: WhisperProcessor) -> DatasetDict:
+    dataset, _manifest_identity = prepare_dataset_with_identity(config, processor)
+    return dataset
+
+
+def prepare_dataset_with_identity(
+    config: TrainingConfig,
+    processor: WhisperProcessor,
+) -> tuple[DatasetDict, SplitManifestIdentity | None]:
     if config.language_policy not in {"metadata", "global", "none"}:
         raise ValueError(f"Unsupported language policy: {config.language_policy}")
 
-    dataset = load_audiofolder_dataset(config.dataset_dir)
+    prompt_config = build_prompt_conditioning_config(config)
+    validate_prompt_config(prompt_config)
 
-    if "validation" not in dataset:
+    dataset = load_audiofolder_dataset(config.dataset_dir)
+    manifest_identity = None
+
+    if config.split_manifest is not None:
+        dataset, manifest_identity = apply_split_manifest(dataset, config.split_manifest)
+        missing_required = [split for split in ("train", "validation") if split not in dataset]
+        if missing_required:
+            missing_text = ", ".join(missing_required)
+            raise ValueError(f"Split manifest must assign {missing_text} rows for training.")
+        # Keep benchmark/test audio quarantined from preprocessing and feature
+        # caches. Training needs only train + validation; probing reloads its
+        # requested split independently from the frozen manifest.
+        dataset = DatasetDict(train=dataset["train"], validation=dataset["validation"])
+    elif "validation" not in dataset:
         split = dataset["train"].train_test_split(test_size=config.validation_size, seed=config.seed)
         dataset = DatasetDict(train=split["train"], validation=split["test"])
 
@@ -289,11 +398,37 @@ def prepare_dataset(config: TrainingConfig, processor: WhisperProcessor) -> Data
         ).input_features[0]
         language = language_for_example(example, config)
         processor.tokenizer.set_prefix_tokens(language=language, task=config.task)
-        example["labels"] = processor.tokenizer(example["text"]).input_ids
+        transcript_labels = processor.tokenizer(example["text"]).input_ids
+        if prompt_config.enabled:
+            prompt_text = build_prompt_text(example, prompt_config)
+            prompt_token_ids = encode_prompt_token_ids(
+                processor.tokenizer,
+                prompt_text,
+                prompt_config.max_prompt_tokens,
+            )
+            prompted = build_prompted_labels(
+                transcript_label_ids=transcript_labels,
+                prompt_token_ids=prompt_token_ids,
+                max_label_length=config.max_label_length,
+            )
+            example["labels"] = prompted.labels
+            example["prompt_label_length"] = prompted.prompt_label_length
+        else:
+            example["labels"] = transcript_labels
         return example
 
     # ponytail: disk-backed feature cache; in-memory map holds ~8GB of mels and OOMs the box
-    cache_dir = config.output_dir.parent / "feature_cache"
+    cache_key = preprocessing_cache_key(
+        config=config,
+        dataset=dataset_identity(config.dataset_dir, manifest_identity),
+        prompt=prompt_strategy_payload(config),
+        processor_identity={
+            "tokenizer": getattr(processor.tokenizer, "name_or_path", None),
+            "tokenizer_revision": processor_revision(processor),
+            "sampling_rate": getattr(processor.feature_extractor, "sampling_rate", None),
+        },
+    )
+    cache_dir = config.output_dir.parent / "feature_cache" / cache_key[:20]
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     dataset = dataset.map(
@@ -312,7 +447,36 @@ def prepare_dataset(config: TrainingConfig, processor: WhisperProcessor) -> Data
         writer_batch_size=32,
     )
 
-    return dataset
+    return dataset, manifest_identity
+
+
+def processor_revision(processor: WhisperProcessor) -> str | None:
+    for component in (processor.tokenizer, processor.feature_extractor):
+        init_kwargs = getattr(component, "init_kwargs", None)
+        if isinstance(init_kwargs, dict) and init_kwargs.get("_commit_hash"):
+            return str(init_kwargs["_commit_hash"])
+    return None
+
+
+def build_prompt_conditioning_config(config: TrainingConfig) -> PromptConditioningConfig:
+    return PromptConditioningConfig(
+        enabled=config.prompt_conditioning,
+        max_prompt_tokens=config.prompt_max_tokens,
+        fields=parse_prompt_fields(config.prompt_fields),
+        terms_only=config.prompt_terms_only,
+        allow_future_context=config.prompt_allow_future_context,
+    )
+
+
+def prompt_strategy_payload(config: TrainingConfig) -> dict[str, Any]:
+    prompt_config = build_prompt_conditioning_config(config)
+    return {
+        "enabled": prompt_config.enabled,
+        "max_prompt_tokens": prompt_config.max_prompt_tokens,
+        "fields": list(prompt_config.fields),
+        "terms_only": prompt_config.terms_only,
+        "allow_future_context": prompt_config.allow_future_context,
+    }
 
 
 def language_for_example(example: dict[str, Any], config: TrainingConfig) -> str | None:
@@ -358,7 +522,7 @@ def build_training_args(config: TrainingConfig) -> Seq2SeqTrainingArguments:
         "dataloader_num_workers": config.dataloader_num_workers,
         "report_to": ["tensorboard"],
         "load_best_model_at_end": config.load_best_model_at_end,
-        "metric_for_best_model": "wer" if config.predict_with_generate else "eval_loss",
+        "metric_for_best_model": "micro_cer" if config.predict_with_generate else "eval_loss",
         "greater_is_better": False,
         "push_to_hub": config.push_to_hub,
         "hub_model_id": config.hub_model_id,
@@ -371,6 +535,12 @@ def build_training_args(config: TrainingConfig) -> Seq2SeqTrainingArguments:
         kwargs["evaluation_strategy"] = "steps"
 
     return Seq2SeqTrainingArguments(**kwargs)
+
+
+def percent(value: float | None) -> float:
+    if value is None:
+        return float("inf")
+    return 100.0 * value
 
 
 def build_trainer_kwargs(
