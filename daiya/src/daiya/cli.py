@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .audio import FileReplayAudioSource
+from .asr import DECODING_POLICIES, DEFAULT_SHORT_UTTERANCE_SECONDS
 from .pipeline import PipelineConfig, StreamingPipeline
 
 
@@ -26,6 +27,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--compute-type", default="int8_float16", help="faster-whisper compute type.")
     parser.add_argument("--language", default=None, help="Optional ASR language hint.")
     parser.add_argument("--initial-prompt", default=None, help="Optional ASR prompt/context.")
+    parser.add_argument(
+        "--asr-decoding-policy",
+        choices=DECODING_POLICIES,
+        default="baseline",
+        help="Named faster-whisper decoding policy; baseline preserves current behavior.",
+    )
+    parser.add_argument(
+        "--asr-short-utterance-seconds",
+        type=float,
+        default=DEFAULT_SHORT_UTTERANCE_SECONDS,
+        help="Inclusive duration threshold for short-utterance decoding policies.",
+    )
     parser.add_argument(
         "--diarization-backend",
         choices=("auto", "null"),
@@ -46,6 +59,8 @@ async def run(args: argparse.Namespace) -> int:
             asr_compute_type=args.compute_type,
             language=args.language,
             initial_prompt=args.initial_prompt,
+            asr_decoding_policy=args.asr_decoding_policy,
+            asr_short_utterance_seconds=args.asr_short_utterance_seconds,
             diarization_backend=args.diarization_backend,
         )
     )

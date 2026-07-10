@@ -14,6 +14,17 @@ def _bypass_pipeline() -> StreamingPipeline:
 
 
 class EngineToggleTests(unittest.TestCase):
+    def test_decoding_policy_config_validation(self) -> None:
+        config = PipelineConfig(
+            enable_asr=False,
+            asr_decoding_policy="short_greedy",
+            asr_short_utterance_seconds=2.5,
+        )
+        self.assertEqual(config.asr_decoding_policy, "short_greedy")
+        self.assertEqual(config.asr_short_utterance_seconds, 2.5)
+        with self.assertRaisesRegex(ValueError, "unknown ASR decoding policy"):
+            PipelineConfig(enable_asr=False, asr_decoding_policy="unknown")
+
     def test_asr_off_emits_textless_speaker_events(self) -> None:
         pipeline = StreamingPipeline(
             PipelineConfig(

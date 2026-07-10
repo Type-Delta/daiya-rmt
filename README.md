@@ -108,6 +108,12 @@ Useful CLI options:
 - `--compute-type` - faster-whisper compute type, default `int8_float16`.
 - `--language` - optional language hint.
 - `--initial-prompt` - optional ASR prompt/context.
+- `--asr-decoding-policy` - named decoding policy: `baseline`,
+  `short_beam`, or `short_greedy`. The default is `baseline`, which preserves
+  the existing decoder behavior.
+- `--asr-short-utterance-seconds` - inclusive duration threshold used by the
+  short-utterance policies, default `3.0` seconds. It has no effect under
+  `baseline`.
 - `--chunk-seconds` - replay chunk size.
 - `--no-pace` - process as fast as possible.
 - `--json` - print raw JSON events.
@@ -128,7 +134,31 @@ $env:DAIYA_ASR_DEVICE='auto'
 $env:DAIYA_ASR_COMPUTE_TYPE='int8_float16'
 $env:DAIYA_ASR_LANGUAGE=''
 $env:DAIYA_ASR_INITIAL_PROMPT=''
+$env:DAIYA_ASR_DECODING_POLICY='baseline'
+$env:DAIYA_ASR_SHORT_UTTERANCE_SECONDS='3.0'
 ```
+
+`baseline` is deliberately the default and keeps the current sparse temperature
+fallback ladder for every utterance. The experimental policies alter decoding
+only when the original utterance duration is at or below the threshold:
+
+- `short_beam` uses beam size `8` and patience `1.2`.
+- `short_greedy` uses beam size `1` and best-of `1`.
+
+For example, to evaluate the beam policy on utterances up to three seconds:
+
+```powershell
+uv run --package daiya daiya path\to\audio.wav `
+  --asr-decoding-policy short_beam `
+  --asr-short-utterance-seconds 3.0 `
+  --no-pace `
+  --json
+```
+
+These policies are experimental and easy to disable: omit the options or set
+`DAIYA_ASR_DECODING_POLICY=baseline`. See
+[`docs/short-utterance-decoding-policy.md`](docs/short-utterance-decoding-policy.md)
+for the benchmark protocol and recommendation.
 
 For quick smoke tests, use a smaller model:
 
