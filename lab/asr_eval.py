@@ -104,13 +104,17 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Evaluate faster-whisper models against Daiya's clean labeled ASR chunks."
     )
-    parser.add_argument("--model", default=None, help="faster-whisper model name or local model path.")
+    parser.add_argument(
+        "--model", default=None, help="faster-whisper model name or local model path."
+    )
     parser.add_argument(
         "--models",
         default=None,
         help="Comma-separated faster-whisper model names/paths to benchmark with identical config.",
     )
-    parser.add_argument("--limit", type=int, default=None, help="Maximum metadata rows to evaluate.")
+    parser.add_argument(
+        "--limit", type=int, default=None, help="Maximum metadata rows to evaluate."
+    )
     parser.add_argument(
         "--manifest",
         type=Path,
@@ -149,14 +153,22 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Load one or more existing details JSONL files and summarize/compare compatible raw outputs.",
     )
-    parser.add_argument("--device", default="auto", help="faster-whisper device, e.g. auto, cpu, cuda.")
+    parser.add_argument(
+        "--device", default="auto", help="faster-whisper device, e.g. auto, cpu, cuda."
+    )
     parser.add_argument(
         "--compute-type",
         default="default",
         help="faster-whisper compute type, e.g. default, int8, float16, int8_float16.",
     )
-    parser.add_argument("--language", default=None, help="Optional language hint passed to transcribe().")
-    parser.add_argument("--initial-prompt", default=None, help="Optional prompt passed to transcribe().")
+    parser.add_argument(
+        "--language",
+        default=None,
+        help="Optional language hint passed to transcribe().",
+    )
+    parser.add_argument(
+        "--initial-prompt", default=None, help="Optional prompt passed to transcribe()."
+    )
     parser.add_argument(
         "--include-context-technical-terms",
         action="store_true",
@@ -174,7 +186,9 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_OUTPUT_DIR,
         help="Directory for details JSONL and summary JSON.",
     )
-    parser.add_argument("--beam-size", type=int, default=5, help="Beam size passed to transcribe().")
+    parser.add_argument(
+        "--beam-size", type=int, default=5, help="Beam size passed to transcribe()."
+    )
     parser.add_argument(
         "--no-condition-on-previous-text",
         action="store_true",
@@ -284,7 +298,9 @@ def sha256_file(path: Path) -> str:
 
 
 def sha256_json(payload: Any) -> str:
-    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=json_default).encode("utf-8")
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, default=json_default
+    ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -322,7 +338,9 @@ def read_metadata(dataset_dir: Path, limit: int | None) -> list[dict[str, Any]]:
             try:
                 record = json.loads(line)
             except json.JSONDecodeError as exc:
-                raise ValueError(f"Invalid JSON on {metadata_path}:{line_number}: {exc}") from exc
+                raise ValueError(
+                    f"Invalid JSON on {metadata_path}:{line_number}: {exc}"
+                ) from exc
             record["_line_number"] = line_number
             rows.append(record)
     return rows
@@ -336,7 +354,9 @@ def record_audio_name(record: dict[str, Any]) -> str | None:
     return str(file_name) if file_name else None
 
 
-def sample_id_for_record(record: dict[str, Any], preferred_field: str = "sample_id") -> str:
+def sample_id_for_record(
+    record: dict[str, Any], preferred_field: str = "sample_id"
+) -> str:
     for key in (preferred_field, "sample_id", "id", "uid", "uuid"):
         value = record.get(key)
         if value is not None and str(value).strip():
@@ -372,11 +392,17 @@ def read_manifest_ids(manifest_path: Path, preferred_field: str) -> list[str]:
     if suffix == ".json":
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
         if isinstance(payload, dict):
-            payload = payload.get("samples", payload.get("items", payload.get("ids", payload)))
+            payload = payload.get(
+                "samples", payload.get("items", payload.get("ids", payload))
+            )
         if isinstance(payload, list):
             ids = []
             for item in payload:
-                ids.append(manifest_id_from_row(item, preferred_field) if isinstance(item, dict) else str(item).strip())
+                ids.append(
+                    manifest_id_from_row(item, preferred_field)
+                    if isinstance(item, dict)
+                    else str(item).strip()
+                )
             return [sample_id for sample_id in ids if sample_id]
         if isinstance(payload, dict):
             return [manifest_id_from_row(payload, preferred_field)]
@@ -400,20 +426,32 @@ def read_manifest_ids(manifest_path: Path, preferred_field: str) -> list[str]:
                     ids.append(manifest_id_from_row(json.loads(line), preferred_field))
                     continue
                 except json.JSONDecodeError as exc:
-                    raise ValueError(f"Invalid JSONL manifest row {manifest_path}:{line_number}: {exc}") from exc
+                    raise ValueError(
+                        f"Invalid JSONL manifest row {manifest_path}:{line_number}: {exc}"
+                    ) from exc
             ids.append(line.split(",", 1)[0].split("\t", 1)[0].strip())
     return ids
 
 
-def parse_requested_sample_ids(args: argparse.Namespace) -> tuple[list[str] | None, str, str | None]:
+def parse_requested_sample_ids(
+    args: argparse.Namespace,
+) -> tuple[list[str] | None, str, str | None]:
     if args.manifest and args.sample_ids:
         raise ValueError("--manifest and --sample-ids are mutually exclusive.")
     if (args.manifest or args.sample_ids) and args.limit is not None:
-        raise ValueError("--limit cannot be combined with a fixed manifest/sample allowlist.")
+        raise ValueError(
+            "--limit cannot be combined with a fixed manifest/sample allowlist."
+        )
     if args.manifest:
-        return read_manifest_ids(args.manifest, args.sample_id_field), "manifest", str(args.manifest.resolve())
+        return (
+            read_manifest_ids(args.manifest, args.sample_id_field),
+            "manifest",
+            str(args.manifest.resolve()),
+        )
     if args.sample_ids:
-        sample_ids = [item.strip() for item in args.sample_ids.split(",") if item.strip()]
+        sample_ids = [
+            item.strip() for item in args.sample_ids.split(",") if item.strip()
+        ]
         return sample_ids, "sample_ids", None
     return None, "limit" if args.limit is not None else "metadata", None
 
@@ -435,20 +473,30 @@ def select_metadata(
     if requested_sample_ids is None:
         return metadata
 
-    validate_unique_sample_ids(requested_sample_ids, source="Requested manifest/sample allowlist")
+    validate_unique_sample_ids(
+        requested_sample_ids, source="Requested manifest/sample allowlist"
+    )
     by_id: dict[str, list[dict[str, Any]]] = {}
     for record in metadata:
         by_id.setdefault(str(record["_sample_id"]), []).append(record)
 
-    missing = [sample_id for sample_id in requested_sample_ids if sample_id not in by_id]
-    duplicate_records = sorted(sample_id for sample_id in requested_sample_ids if len(by_id.get(sample_id, [])) > 1)
+    missing = [
+        sample_id for sample_id in requested_sample_ids if sample_id not in by_id
+    ]
+    duplicate_records = sorted(
+        sample_id
+        for sample_id in requested_sample_ids
+        if len(by_id.get(sample_id, [])) > 1
+    )
     if missing or duplicate_records:
         parts = []
         if missing:
             parts.append(f"missing IDs: {missing[:10]}")
         if duplicate_records:
             parts.append(f"metadata duplicates: {duplicate_records[:10]}")
-        raise ValueError("Manifest/sample allowlist validation failed; " + "; ".join(parts))
+        raise ValueError(
+            "Manifest/sample allowlist validation failed; " + "; ".join(parts)
+        )
     return [by_id[sample_id][0] for sample_id in requested_sample_ids]
 
 
@@ -456,7 +504,9 @@ def portable_source_id(value: str) -> str:
     return value.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
 
 
-def read_split_manifest_assignments(path: Path) -> tuple[dict[str, str], dict[str, str]]:
+def read_split_manifest_assignments(
+    path: Path,
+) -> tuple[dict[str, str], dict[str, str]]:
     if not path.exists():
         raise FileNotFoundError(f"Split manifest not found: {path}")
     sample_splits: dict[str, str] = {}
@@ -469,26 +519,52 @@ def read_split_manifest_assignments(path: Path) -> tuple[dict[str, str], dict[st
             try:
                 row = json.loads(line)
             except json.JSONDecodeError as exc:
-                raise ValueError(f"Invalid split manifest JSON at {path}:{line_number}: {exc}") from exc
+                raise ValueError(
+                    f"Invalid split manifest JSON at {path}:{line_number}: {exc}"
+                ) from exc
             if not isinstance(row, dict):
-                raise ValueError(f"Split manifest row must be an object at {path}:{line_number}")
+                raise ValueError(
+                    f"Split manifest row must be an object at {path}:{line_number}"
+                )
             split = str(row.get("split") or row.get("partition") or "").strip().lower()
-            split = {"val": "validation", "eval": "validation", "dev": "validation"}.get(split, split)
+            split = {
+                "val": "validation",
+                "eval": "validation",
+                "dev": "validation",
+            }.get(split, split)
             if split not in {"train", "validation", "test", "benchmark"}:
                 raise ValueError(f"Invalid split {split!r} at {path}:{line_number}")
             sample_id = row.get("sample_id") or row.get("id") or row.get("uid")
-            explicit_group = row.get("conversation") or row.get("conversation_id") or row.get("group_id") or row.get("session_id")
+            explicit_group = (
+                row.get("conversation")
+                or row.get("conversation_id")
+                or row.get("group_id")
+                or row.get("session_id")
+            )
             source_file = row.get("source_file")
-            group_id = str(explicit_group) if explicit_group else portable_source_id(str(source_file)) if source_file else None
+            group_id = (
+                str(explicit_group)
+                if explicit_group
+                else portable_source_id(str(source_file))
+                if source_file
+                else None
+            )
             if not sample_id and not group_id:
-                raise ValueError(f"Split manifest row has no sample/group identity at {path}:{line_number}")
-            for mapping, key, label in ((sample_splits, sample_id, "sample"), (group_splits, group_id, "group")):
+                raise ValueError(
+                    f"Split manifest row has no sample/group identity at {path}:{line_number}"
+                )
+            for mapping, key, label in (
+                (sample_splits, sample_id, "sample"),
+                (group_splits, group_id, "group"),
+            ):
                 if not key:
                     continue
                 key = str(key)
                 previous = mapping.setdefault(key, split)
                 if previous != split:
-                    raise ValueError(f"Split manifest {label} {key!r} maps to both {previous!r} and {split!r}")
+                    raise ValueError(
+                        f"Split manifest {label} {key!r} maps to both {previous!r} and {split!r}"
+                    )
     return sample_splits, group_splits
 
 
@@ -501,7 +577,9 @@ def validate_selected_split(
     assignments: list[str] = []
     for record in metadata:
         sample_id = str(record.get("_sample_id") or sample_id_for_record(record))
-        group_id = portable_source_id(str(record.get("source_file") or source_group_for_record(record)))
+        group_id = portable_source_id(
+            str(record.get("source_file") or source_group_for_record(record))
+        )
         split = sample_splits.get(sample_id) or group_splits.get(group_id)
         if split != required_split:
             raise ValueError(
@@ -522,17 +600,27 @@ def validate_rolling_order(metadata: list[dict[str, Any]]) -> None:
     previous_start: float | None = None
     closed_groups: set[str] = set()
     for record in metadata:
-        group = portable_source_id(str(record.get("source_file") or source_group_for_record(record)))
+        group = portable_source_id(
+            str(record.get("source_file") or source_group_for_record(record))
+        )
         start = record.get("source_start")
         if group != previous_group:
             if group in closed_groups:
-                raise ValueError(f"Rolling manifest re-enters closed source group {group!r}.")
+                raise ValueError(
+                    f"Rolling manifest re-enters closed source group {group!r}."
+                )
             if previous_group is not None:
                 closed_groups.add(previous_group)
             previous_group = group
             previous_start = None
-        if isinstance(start, int | float) and previous_start is not None and float(start) < previous_start:
-            raise ValueError(f"Rolling manifest is out of source-time order for {group!r}.")
+        if (
+            isinstance(start, int | float)
+            and previous_start is not None
+            and float(start) < previous_start
+        ):
+            raise ValueError(
+                f"Rolling manifest is out of source-time order for {group!r}."
+            )
         if isinstance(start, int | float):
             previous_start = float(start)
 
@@ -546,7 +634,9 @@ def sample_set_hash(sample_ids: list[str]) -> str:
     return sha256_json(sample_ids)
 
 
-def decode_config_payload(args: argparse.Namespace, strategies: list[str]) -> dict[str, Any]:
+def decode_config_payload(
+    args: argparse.Namespace, strategies: list[str]
+) -> dict[str, Any]:
     return {
         "language": args.language,
         "initial_prompt": args.initial_prompt,
@@ -584,7 +674,9 @@ def model_identity(model_arg: str) -> dict[str, Any]:
             except OSError:
                 continue
             rel = str(child.relative_to(path)).replace("\\", "/")
-            entries.append({"path": rel, "size": stat.st_size, "mtime_ns": stat.st_mtime_ns})
+            entries.append(
+                {"path": rel, "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+            )
         fingerprint_payload["files"] = entries
     return {
         "name": model_arg,
@@ -658,7 +750,11 @@ def token_units(text: str) -> list[str]:
         if is_thai(char):
             unit = [char]
             index += 1
-            while index < len(normalized) and is_thai(normalized[index]) and is_combining_or_tone(normalized[index]):
+            while (
+                index < len(normalized)
+                and is_thai(normalized[index])
+                and is_combining_or_tone(normalized[index])
+            ):
                 unit.append(normalized[index])
                 index += 1
             tokens.append("".join(unit))
@@ -740,7 +836,11 @@ def script_name(char: str) -> str | None:
 def non_thai_english_scripts(text: str) -> dict[str, int]:
     counts: Counter[str] = Counter()
     for char in unicodedata.normalize("NFKC", text):
-        if char.isspace() or is_punctuation_or_symbol(char) or is_combining_or_tone(char):
+        if (
+            char.isspace()
+            or is_punctuation_or_symbol(char)
+            or is_combining_or_tone(char)
+        ):
             continue
         script = script_name(char)
         if script in {None, "Thai", "Latin", "Digit"}:
@@ -749,13 +849,17 @@ def non_thai_english_scripts(text: str) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
-def language_and_mixed_bucket(record: dict[str, Any], reference: str) -> tuple[str | None, str]:
+def language_and_mixed_bucket(
+    record: dict[str, Any], reference: str
+) -> tuple[str | None, str]:
     raw_language = record.get("language") or record.get("language_label")
     language = str(raw_language).strip() if raw_language not in (None, "") else None
     label = (language or "").lower().replace("-", "_")
     if "thai" in label and ("english" in label or "_en" in label or " en" in label):
         return language, "thai_english"
-    if ("japanese" in label or label.startswith("ja")) and ("english" in label or "_en" in label or " en" in label):
+    if ("japanese" in label or label.startswith("ja")) and (
+        "english" in label or "_en" in label or " en" in label
+    ):
         return language, "japanese_english"
     if "thai" in label or label.startswith("th"):
         return language, "thai"
@@ -767,13 +871,17 @@ def language_and_mixed_bucket(record: dict[str, Any], reference: str) -> tuple[s
     scripts = Counter(
         script
         for char in unicodedata.normalize("NFKC", reference)
-        if not char.isspace() and not is_punctuation_or_symbol(char) and not is_combining_or_tone(char)
+        if not char.isspace()
+        and not is_punctuation_or_symbol(char)
+        and not is_combining_or_tone(char)
         for script in [script_name(char)]
         if script is not None
     )
     has_latin = scripts.get("Latin", 0) > 0
     has_thai = scripts.get("Thai", 0) > 0
-    has_japanese = any(scripts.get(script, 0) > 0 for script in ("Hiragana", "Katakana", "CJK"))
+    has_japanese = any(
+        scripts.get(script, 0) > 0 for script in ("Hiragana", "Katakana", "CJK")
+    )
     if has_thai and has_latin:
         return language, "thai_english"
     if has_japanese and has_latin:
@@ -788,13 +896,23 @@ def language_and_mixed_bucket(record: dict[str, Any], reference: str) -> tuple[s
 
 
 def source_group_for_record(record: dict[str, Any]) -> str:
-    for key in ("group", "source_group", "source_file", "session_id", "conversation_id"):
+    for key in (
+        "group",
+        "source_group",
+        "source_file",
+        "session_id",
+        "conversation_id",
+    ):
         value = record.get(key)
         if value not in (None, ""):
             return str(value)
     audio_name = record_audio_name(record)
     if audio_name:
-        return str(Path(audio_name).parent if Path(audio_name).parent != Path(".") else Path(audio_name).stem)
+        return str(
+            Path(audio_name).parent
+            if Path(audio_name).parent != Path(".")
+            else Path(audio_name).stem
+        )
     return "unknown"
 
 
@@ -870,7 +988,9 @@ def memory_snapshot() -> dict[str, Any]:
     return {
         "ram_rss_bytes": ram_bytes,
         "gpu_peak_bytes": gpu_bytes,
-        "gpu_measurement": "nvidia-smi_process_snapshot" if gpu_bytes is not None else "unavailable",
+        "gpu_measurement": "nvidia-smi_process_snapshot"
+        if gpu_bytes is not None
+        else "unavailable",
     }
 
 
@@ -910,16 +1030,25 @@ def process_gpu_memory_bytes() -> int | None:
 def memory_peak(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
     return {
         "ram_rss_bytes": max(
-            [value for value in (before.get("ram_rss_bytes"), after.get("ram_rss_bytes")) if isinstance(value, int)],
+            [
+                value
+                for value in (before.get("ram_rss_bytes"), after.get("ram_rss_bytes"))
+                if isinstance(value, int)
+            ],
             default=None,
         ),
         "gpu_peak_bytes": max(
-            [value for value in (before.get("gpu_peak_bytes"), after.get("gpu_peak_bytes")) if isinstance(value, int)],
+            [
+                value
+                for value in (before.get("gpu_peak_bytes"), after.get("gpu_peak_bytes"))
+                if isinstance(value, int)
+            ],
             default=None,
         ),
         "gpu_measurement": (
             "nvidia-smi_process_snapshot"
-            if before.get("gpu_peak_bytes") is not None or after.get("gpu_peak_bytes") is not None
+            if before.get("gpu_peak_bytes") is not None
+            or after.get("gpu_peak_bytes") is not None
             else "unavailable"
         ),
     }
@@ -936,7 +1065,11 @@ def write_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         for row in rows:
-            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True, default=json_default))
+            handle.write(
+                json.dumps(
+                    row, ensure_ascii=False, sort_keys=True, default=json_default
+                )
+            )
             handle.write("\n")
 
 
@@ -950,7 +1083,9 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
             try:
                 rows.append(json.loads(line))
             except json.JSONDecodeError as exc:
-                raise ValueError(f"Invalid JSONL row {path}:{line_number}: {exc}") from exc
+                raise ValueError(
+                    f"Invalid JSONL row {path}:{line_number}: {exc}"
+                ) from exc
     return rows
 
 
@@ -961,7 +1096,9 @@ def json_default(value: object) -> object:
 
 
 def nan_safe_mean(values: list[float | None]) -> float | None:
-    real_values = [value for value in values if value is not None and not math.isnan(value)]
+    real_values = [
+        value for value in values if value is not None and not math.isnan(value)
+    ]
     if not real_values:
         return None
     return sum(real_values) / len(real_values)
@@ -1015,7 +1152,9 @@ def aggregate_latency_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "processed_audio_rtf_p50": percentile(processed_rtfs, 50),
         "processed_audio_rtf_p95": percentile(processed_rtfs, 95),
         "duration_seconds": sum(durations) if durations else None,
-        "processed_audio_duration_seconds": sum(processed_durations) if processed_durations else None,
+        "processed_audio_duration_seconds": sum(processed_durations)
+        if processed_durations
+        else None,
     }
 
 
@@ -1040,7 +1179,9 @@ def aggregate_memory_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def contiguous_block_indices(length: int, block_size: int, rng: random.Random) -> list[int]:
+def contiguous_block_indices(
+    length: int, block_size: int, rng: random.Random
+) -> list[int]:
     if block_size <= 0:
         raise ValueError("bootstrap block size must be positive")
     if length <= 0:
@@ -1056,10 +1197,16 @@ def contiguous_block_indices(length: int, block_size: int, rng: random.Random) -
 def aggregate_metric_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     aggregate_distance = sum(row["metrics"]["cer_distance"] for row in rows)
     aggregate_length = sum(row["metrics"]["cer_reference_length"] for row in rows)
-    aggregate_no_space_distance = sum(row["metrics"]["cer_no_space_distance"] for row in rows)
-    aggregate_no_space_length = sum(row["metrics"]["cer_no_space_reference_length"] for row in rows)
+    aggregate_no_space_distance = sum(
+        row["metrics"]["cer_no_space_distance"] for row in rows
+    )
+    aggregate_no_space_length = sum(
+        row["metrics"]["cer_no_space_reference_length"] for row in rows
+    )
     aggregate_word_distance = sum(row["metrics"]["wer_like_distance"] for row in rows)
-    aggregate_word_length = sum(row["metrics"]["wer_like_reference_length"] for row in rows)
+    aggregate_word_length = sum(
+        row["metrics"]["wer_like_reference_length"] for row in rows
+    )
     return {
         "count": len(rows),
         "cer_edit_count": aggregate_distance,
@@ -1068,8 +1215,12 @@ def aggregate_metric_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "micro_cer": error_rate(aggregate_distance, aggregate_length),
         "cer_no_space_edit_count": aggregate_no_space_distance,
         "cer_no_space_reference_count": aggregate_no_space_length,
-        "mean_cer_no_space": nan_safe_mean([row["metrics"]["cer_no_space"] for row in rows]),
-        "micro_cer_no_space": error_rate(aggregate_no_space_distance, aggregate_no_space_length),
+        "mean_cer_no_space": nan_safe_mean(
+            [row["metrics"]["cer_no_space"] for row in rows]
+        ),
+        "micro_cer_no_space": error_rate(
+            aggregate_no_space_distance, aggregate_no_space_length
+        ),
         "wer_like_edit_count": aggregate_word_distance,
         "wer_like_reference_count": aggregate_word_length,
         "mean_wer_like": nan_safe_mean([row["metrics"]["wer_like"] for row in rows]),
@@ -1133,9 +1284,15 @@ def add_uncertainty(
     aggregate["uncertainty"] = {
         "method": "contiguous_moving_block_bootstrap",
         "block_size": block_size,
-        "micro_cer": bootstrap_micro_ci(rows, metric="cer", samples=samples, seed=seed, block_size=block_size),
+        "micro_cer": bootstrap_micro_ci(
+            rows, metric="cer", samples=samples, seed=seed, block_size=block_size
+        ),
         "micro_wer_like": bootstrap_micro_ci(
-            rows, metric="wer_like", samples=samples, seed=seed + 1, block_size=block_size
+            rows,
+            metric="wer_like",
+            samples=samples,
+            seed=seed + 1,
+            block_size=block_size,
         ),
     }
     return aggregate
@@ -1153,7 +1310,9 @@ def paired_bootstrap_delta(
     left_by_id = {str(row.get("sample_id")): row for row in left_rows}
     right_by_id = {str(row.get("sample_id")): row for row in right_rows}
     if len(left_by_id) != len(left_rows) or len(right_by_id) != len(right_rows):
-        raise ValueError("Paired comparison contains duplicate sample IDs within a model/strategy.")
+        raise ValueError(
+            "Paired comparison contains duplicate sample IDs within a model/strategy."
+        )
     if set(left_by_id) != set(right_by_id):
         missing_left = sorted(set(right_by_id) - set(left_by_id))[:5]
         missing_right = sorted(set(left_by_id) - set(right_by_id))[:5]
@@ -1176,7 +1335,9 @@ def paired_bootstrap_delta(
             right_length += right_metric[length_key]
         left_rate = error_rate(left_distance, left_length)
         right_rate = error_rate(right_distance, right_length)
-        return None if left_rate is None or right_rate is None else left_rate - right_rate
+        return (
+            None if left_rate is None or right_rate is None else left_rate - right_rate
+        )
 
     point = delta(list(range(len(sample_ids))))
     rng = random.Random(seed)
@@ -1224,7 +1385,11 @@ def paired_model_delta_summaries(
                     "left_model": left,
                     "right_model": right,
                     "micro_cer": paired_bootstrap_delta(
-                        by_model[left], by_model[right], metric="cer", samples=samples, seed=seed + offset,
+                        by_model[left],
+                        by_model[right],
+                        metric="cer",
+                        samples=samples,
+                        seed=seed + offset,
                         block_size=block_size,
                     ),
                     "micro_wer_like": paired_bootstrap_delta(
@@ -1281,7 +1446,9 @@ def parse_strategies(args: argparse.Namespace) -> list[str]:
             continue
         if strategy not in STRATEGIES:
             valid = ", ".join(sorted(STRATEGIES))
-            raise ValueError(f"Unknown benchmark strategy {strategy!r}; expected one of: {valid}")
+            raise ValueError(
+                f"Unknown benchmark strategy {strategy!r}; expected one of: {valid}"
+            )
         if strategy not in strategies:
             strategies.append(strategy)
     if not strategies:
@@ -1300,8 +1467,14 @@ def build_run_metadata(
     split_identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     sample_ids = [str(record.get("_sample_id")) for record in metadata]
-    manifest_hash = sha256_file(Path(manifest_source)) if manifest_source else (
-        sample_set_hash(requested_sample_ids) if requested_sample_ids is not None else None
+    manifest_hash = (
+        sha256_file(Path(manifest_source))
+        if manifest_source
+        else (
+            sample_set_hash(requested_sample_ids)
+            if requested_sample_ids is not None
+            else None
+        )
     )
     decode_config = decode_config_payload(args, strategies)
     payload = {
@@ -1311,8 +1484,12 @@ def build_run_metadata(
         "decode_config_hash": sha256_json(decode_config),
         "selection_mode": selection_mode,
         "split_manifest_hash": split_identity.get("sha256") if split_identity else None,
-        "required_split": split_identity.get("required_split") if split_identity else None,
-        "split_assignment_hash": split_identity.get("assignment_sha256") if split_identity else None,
+        "required_split": split_identity.get("required_split")
+        if split_identity
+        else None,
+        "split_assignment_hash": split_identity.get("assignment_sha256")
+        if split_identity
+        else None,
     }
     return {
         **payload,
@@ -1321,7 +1498,8 @@ def build_run_metadata(
         "decode_config": decode_config,
         "split_manifest": split_identity,
         "benchmark_fingerprint": sha256_json(payload),
-        "primary_run": selection_mode in {"manifest", "sample_ids"} and split_identity is not None,
+        "primary_run": selection_mode in {"manifest", "sample_ids"}
+        and split_identity is not None,
         "seed": args.bootstrap_seed,
     }
 
@@ -1337,19 +1515,32 @@ def compatibility_from_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def assert_compatible_raw_outputs(rows_by_path: dict[Path, list[dict[str, Any]]]) -> dict[str, Any]:
+def assert_compatible_raw_outputs(
+    rows_by_path: dict[Path, list[dict[str, Any]]],
+) -> dict[str, Any]:
     baseline: dict[str, Any] | None = None
     for path, rows in rows_by_path.items():
         if not rows:
             raise ValueError(f"Raw output is empty: {path}")
-        row_compatibilities = {sha256_json(compatibility_from_row(row)): compatibility_from_row(row) for row in rows}
+        row_compatibilities = {
+            sha256_json(compatibility_from_row(row)): compatibility_from_row(row)
+            for row in rows
+        }
         if len(row_compatibilities) != 1:
-            raise ValueError(f"Raw output mixes incompatible fingerprints within one file: {path}")
+            raise ValueError(
+                f"Raw output mixes incompatible fingerprints within one file: {path}"
+            )
         current = next(iter(row_compatibilities.values()))
         if baseline is None:
             baseline = current
             continue
-        for key in ("dataset_hash", "manifest_hash", "sample_set_hash", "decode_config_hash", "benchmark_fingerprint"):
+        for key in (
+            "dataset_hash",
+            "manifest_hash",
+            "sample_set_hash",
+            "decode_config_hash",
+            "benchmark_fingerprint",
+        ):
             if baseline.get(key) != current.get(key):
                 raise ValueError(
                     f"Incompatible raw outputs for {path}: {key} differs "
@@ -1358,20 +1549,28 @@ def assert_compatible_raw_outputs(rows_by_path: dict[Path, list[dict[str, Any]]]
     return baseline or {}
 
 
-def compare_raw_outputs(paths: list[Path], args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
+def compare_raw_outputs(
+    paths: list[Path], args: argparse.Namespace
+) -> tuple[Path, dict[str, Any]]:
     rows_by_path = {path.resolve(): read_jsonl(path) for path in paths}
     compatibility = assert_compatible_raw_outputs(rows_by_path)
     rows = [row for file_rows in rows_by_path.values() for row in file_rows]
     for row in rows:
         if "model_name" not in row:
             model = row.get("model")
-            row["model_name"] = model.get("name") if isinstance(model, dict) else str(model)
+            row["model_name"] = (
+                model.get("name") if isinstance(model, dict) else str(model)
+            )
     run_id = f"{utc_stamp()}_compare_raw"
     summary_path = args.output_dir.resolve() / f"summary_{run_id}.json"
     run_metadata = {
         **compatibility,
-        "decode_config": (rows[0].get("run") or {}).get("decode_config") if rows else None,
-        "primary_run": bool((rows[0].get("run") or {}).get("primary_run")) if rows else False,
+        "decode_config": (rows[0].get("run") or {}).get("decode_config")
+        if rows
+        else None,
+        "primary_run": bool((rows[0].get("run") or {}).get("primary_run"))
+        if rows
+        else False,
     }
     summary = build_summary(
         args=args,
@@ -1398,6 +1597,63 @@ def is_short_detail(row: dict[str, Any], threshold: float) -> bool:
     return isinstance(duration, int | float) and duration <= threshold
 
 
+def model_strategy_summaries(
+    rows: list[dict[str, Any]],
+    *,
+    short_utterance_seconds: float,
+    bootstrap_samples: int,
+    bootstrap_seed: int,
+    bootstrap_block_size: int,
+) -> dict[str, Any]:
+    summaries: dict[str, Any] = {}
+    model_names = sorted({str(row.get("model_name", "unknown")) for row in rows})
+    strategies = sorted({str(row.get("strategy", "unknown")) for row in rows})
+    offset = 0
+    for model_name in model_names:
+        summaries[model_name] = {}
+        for strategy in strategies:
+            selected = [
+                row
+                for row in rows
+                if row.get("model_name") == model_name
+                and row.get("strategy") == strategy
+            ]
+            if not selected:
+                continue
+            summaries[model_name][strategy] = {
+                "overall": add_uncertainty(
+                    aggregate_metric_rows(selected),
+                    selected,
+                    samples=bootstrap_samples,
+                    seed=bootstrap_seed + offset,
+                    block_size=bootstrap_block_size,
+                ),
+                "short_utterance_subset": aggregate_metric_rows(
+                    [
+                        row
+                        for row in selected
+                        if is_short_detail(row, short_utterance_seconds)
+                    ]
+                ),
+                "by_language": grouped_aggregates(
+                    selected,
+                    "language_label",
+                    bootstrap_samples=bootstrap_samples,
+                    bootstrap_seed=bootstrap_seed + 1000 + offset,
+                    bootstrap_block_size=bootstrap_block_size,
+                ),
+                "by_mixed_bucket": grouped_aggregates(
+                    selected,
+                    "mixed_bucket",
+                    bootstrap_samples=bootstrap_samples,
+                    bootstrap_seed=bootstrap_seed + 2000 + offset,
+                    bootstrap_block_size=bootstrap_block_size,
+                ),
+            }
+            offset += 1
+    return summaries
+
+
 def build_summary(
     *,
     args: argparse.Namespace,
@@ -1417,7 +1673,9 @@ def build_summary(
     script_counter: Counter[str] = Counter()
     for row in scored:
         script_counter.update(row.get("prediction_non_thai_english_scripts", {}))
-    short_rows = [row for row in scored if is_short_detail(row, args.short_utterance_seconds)]
+    short_rows = [
+        row for row in scored if is_short_detail(row, args.short_utterance_seconds)
+    ]
     term_rows = [row for row in scored if row.get("english_terms")]
     term_examples = sorted(
         term_rows,
@@ -1427,9 +1685,9 @@ def build_summary(
         ),
         reverse=True,
     )[:10]
-    strategies = sorted({str(row.get("strategy", args.strategy)) for row in details}) or list(
-        getattr(args, "requested_strategies", [args.strategy])
-    )
+    strategies = sorted(
+        {str(row.get("strategy", args.strategy)) for row in details}
+    ) or list(getattr(args, "requested_strategies", [args.strategy]))
     bootstrap_samples = getattr(args, "bootstrap_samples", 1000)
     bootstrap_seed = getattr(args, "bootstrap_seed", 1337)
     bootstrap_block_size = getattr(args, "bootstrap_block_size", 8)
@@ -1442,7 +1700,9 @@ def build_summary(
     )
     model_names = sorted(
         {
-            str(row.get("model_name") or (row.get("model") or {}).get("name", "unknown"))
+            str(
+                row.get("model_name") or (row.get("model") or {}).get("name", "unknown")
+            )
             for row in details
             if isinstance(row.get("model") or {}, dict)
         }
@@ -1473,7 +1733,9 @@ def build_summary(
         "compute_type": args.compute_type,
         "language": args.language,
         "initial_prompt": args.initial_prompt,
-        "include_context_technical_terms": getattr(args, "include_context_technical_terms", False),
+        "include_context_technical_terms": getattr(
+            args, "include_context_technical_terms", False
+        ),
         "beam_size": args.beam_size,
         "condition_on_previous_text": not args.no_condition_on_previous_text,
         "strategy": args.strategy,
@@ -1489,7 +1751,9 @@ def build_summary(
         "output_dir": str(args.output_dir.resolve()),
         "details_path": str(details_path.resolve()),
         "summary_path": str(summary_path.resolve()),
-        "manifest_path": str(args.manifest.resolve()) if getattr(args, "manifest", None) else None,
+        "manifest_path": str(args.manifest.resolve())
+        if getattr(args, "manifest", None)
+        else None,
         "selection_mode": getattr(args, "selection_mode", None),
         "primary_run": primary_run,
         "primary_run_reason": (
@@ -1561,6 +1825,13 @@ def build_summary(
             bootstrap_block_size=bootstrap_block_size,
             include_uncertainty=True,
         ),
+        "by_model_strategy": model_strategy_summaries(
+            scored,
+            short_utterance_seconds=args.short_utterance_seconds,
+            bootstrap_samples=bootstrap_samples,
+            bootstrap_seed=bootstrap_seed + 1500,
+            bootstrap_block_size=bootstrap_block_size,
+        ),
         "paired_model_deltas": paired_model_delta_summaries(
             scored,
             samples=bootstrap_samples,
@@ -1587,7 +1858,9 @@ def build_summary(
         summary["strategy_summaries"] = {
             strategy: {
                 "overall": add_uncertainty(
-                    aggregate_metric_rows([row for row in scored if row.get("strategy") == strategy]),
+                    aggregate_metric_rows(
+                        [row for row in scored if row.get("strategy") == strategy]
+                    ),
                     [row for row in scored if row.get("strategy") == strategy],
                     samples=bootstrap_samples,
                     seed=bootstrap_seed + 600 + offset,
@@ -1602,7 +1875,11 @@ def build_summary(
                     ]
                 ),
                 "english_technical_term_subset": aggregate_metric_rows(
-                    [row for row in scored if row.get("strategy") == strategy and row.get("english_terms")]
+                    [
+                        row
+                        for row in scored
+                        if row.get("strategy") == strategy and row.get("english_terms")
+                    ]
                 ),
             }
             for offset, strategy in enumerate(strategies)
@@ -1625,7 +1902,9 @@ def transcribe_one(
     segments, info = model.transcribe(
         str(audio_path),
         language=args.language,
-        initial_prompt=args.initial_prompt if initial_prompt is None else initial_prompt,
+        initial_prompt=args.initial_prompt
+        if initial_prompt is None
+        else initial_prompt,
         beam_size=args.beam_size,
         condition_on_previous_text=not args.no_condition_on_previous_text,
         word_timestamps=include_after_seconds is not None,
@@ -1636,7 +1915,9 @@ def transcribe_one(
         text = segment.text.strip()
         start = getattr(segment, "start", None)
         end = getattr(segment, "end", None)
-        included = include_after_seconds is None or (isinstance(end, int | float) and end >= include_after_seconds)
+        included = include_after_seconds is None or (
+            isinstance(end, int | float) and end >= include_after_seconds
+        )
         words = []
         word_text_parts = []
         for word in getattr(segment, "words", None) or []:
@@ -1687,13 +1968,17 @@ def transcribe_one(
 def source_gap_seconds(left: dict[str, Any], right: dict[str, Any]) -> float | None:
     left_end = left.get("source_end")
     right_start = right.get("source_start")
-    if not isinstance(left_end, int | float) or not isinstance(right_start, int | float):
+    if not isinstance(left_end, int | float) or not isinstance(
+        right_start, int | float
+    ):
         return None
     return float(right_start) - float(left_end)
 
 
 def same_source(left: dict[str, Any], right: dict[str, Any]) -> bool:
-    return bool(left.get("source_file")) and left.get("source_file") == right.get("source_file")
+    return bool(left.get("source_file")) and left.get("source_file") == right.get(
+        "source_file"
+    )
 
 
 def wav_duration(path: Path) -> float:
@@ -1765,27 +2050,45 @@ def base_detail_for_record(
         "reference_non_thai_english_scripts": non_thai_english_scripts(reference),
         "prompt": None,
         "prompt_metadata": {
-            "initial_prompt_present": bool(run_metadata.get("decode_config", {}).get("initial_prompt")),
-            "rolling_prompt_turns": run_metadata.get("decode_config", {}).get("rolling_prompt_turns"),
-            "rolling_prompt_chars": run_metadata.get("decode_config", {}).get("rolling_prompt_chars"),
+            "initial_prompt_present": bool(
+                run_metadata.get("decode_config", {}).get("initial_prompt")
+            ),
+            "rolling_prompt_turns": run_metadata.get("decode_config", {}).get(
+                "rolling_prompt_turns"
+            ),
+            "rolling_prompt_chars": run_metadata.get("decode_config", {}).get(
+                "rolling_prompt_chars"
+            ),
             "runtime_prompt_chars": 0,
             "runtime_prompt_hash": None,
         },
     }
 
 
-def score_prediction(base_detail: dict[str, Any], prediction: str, transcribe_info: dict[str, Any]) -> dict[str, Any]:
+def score_prediction(
+    base_detail: dict[str, Any], prediction: str, transcribe_info: dict[str, Any]
+) -> dict[str, Any]:
     latency = transcribe_info.get("elapsed_seconds")
-    target_duration = base_detail.get("duration_seconds") or transcribe_info.get("duration_after_vad")
-    processed_duration = transcribe_info.get("duration") or transcribe_info.get("duration_after_vad") or target_duration
+    target_duration = base_detail.get("duration_seconds") or transcribe_info.get(
+        "duration_after_vad"
+    )
+    processed_duration = (
+        transcribe_info.get("duration")
+        or transcribe_info.get("duration_after_vad")
+        or target_duration
+    )
     target_rtf = (
         latency / target_duration
-        if isinstance(latency, int | float) and isinstance(target_duration, int | float) and target_duration > 0
+        if isinstance(latency, int | float)
+        and isinstance(target_duration, int | float)
+        and target_duration > 0
         else None
     )
     processed_rtf = (
         latency / processed_duration
-        if isinstance(latency, int | float) and isinstance(processed_duration, int | float) and processed_duration > 0
+        if isinstance(latency, int | float)
+        and isinstance(processed_duration, int | float)
+        and processed_duration > 0
         else None
     )
     return {
@@ -1816,14 +2119,20 @@ def attach_prompt_metadata(base_detail: dict[str, Any], prompt: str | None) -> N
     }
 
 
-def contextual_terms_prompt(args: argparse.Namespace, records: Iterable[dict[str, Any]]) -> str | None:
+def contextual_terms_prompt(
+    args: argparse.Namespace, records: Iterable[dict[str, Any]]
+) -> str | None:
     if not getattr(args, "include_context_technical_terms", False):
         return None
-    terms = english_terms_from_text(*(str(record.get("context_before") or "") for record in records))
+    terms = english_terms_from_text(
+        *(str(record.get("context_before") or "") for record in records)
+    )
     return f"Technical terms: {', '.join(terms)}" if terms else None
 
 
-def build_common_prompt(args: argparse.Namespace, records: Iterable[dict[str, Any]]) -> str | None:
+def build_common_prompt(
+    args: argparse.Namespace, records: Iterable[dict[str, Any]]
+) -> str | None:
     prompt_parts = []
     if args.initial_prompt:
         prompt_parts.append(args.initial_prompt.strip())
@@ -1834,13 +2143,19 @@ def build_common_prompt(args: argparse.Namespace, records: Iterable[dict[str, An
 
 
 def build_rolling_prompt(
-    args: argparse.Namespace, previous_predictions: list[str], records: Iterable[dict[str, Any]] = ()
+    args: argparse.Namespace,
+    previous_predictions: list[str],
+    records: Iterable[dict[str, Any]] = (),
 ) -> str | None:
     prompt_parts = []
     common_prompt = build_common_prompt(args, records)
     if common_prompt:
         prompt_parts.append(common_prompt)
-    recent_predictions = [text for text in previous_predictions[-args.rolling_prompt_turns :] if text.strip()]
+    recent_predictions = [
+        text
+        for text in previous_predictions[-args.rolling_prompt_turns :]
+        if text.strip()
+    ]
     if recent_predictions:
         rolling_text = " ".join(recent_predictions)[-args.rolling_prompt_chars :]
         prompt_parts.append(f"Previous transcript: {rolling_text}")
@@ -1862,9 +2177,17 @@ def evaluate_single_chunk_strategy(
     previous_group: str | None = None
     previous_record: dict[str, Any] | None = None
     for index, record in enumerate(metadata, start=1):
-        current_group = portable_source_id(str(record.get("source_file") or source_group_for_record(record)))
-        gap = source_gap_seconds(previous_record, record) if previous_record is not None else None
-        if current_group != previous_group or (gap is not None and gap > args.context_max_gap_seconds):
+        current_group = portable_source_id(
+            str(record.get("source_file") or source_group_for_record(record))
+        )
+        gap = (
+            source_gap_seconds(previous_record, record)
+            if previous_record is not None
+            else None
+        )
+        if current_group != previous_group or (
+            gap is not None and gap > args.context_max_gap_seconds
+        ):
             previous_predictions = []
         previous_group = current_group
         previous_record = record
@@ -1881,10 +2204,22 @@ def evaluate_single_chunk_strategy(
         )
 
         if audio_path is None:
-            details.append({**base_detail, "status": "missing_audio_path", "error": "No file_name/path/audio.path"})
+            details.append(
+                {
+                    **base_detail,
+                    "status": "missing_audio_path",
+                    "error": "No file_name/path/audio.path",
+                }
+            )
             continue
         if not audio_path.exists():
-            details.append({**base_detail, "status": "missing_audio_file", "error": f"Not found: {audio_path}"})
+            details.append(
+                {
+                    **base_detail,
+                    "status": "missing_audio_file",
+                    "error": f"Not found: {audio_path}",
+                }
+            )
             continue
 
         try:
@@ -1909,7 +2244,10 @@ def evaluate_single_chunk_strategy(
                     if candidate_path is None or not candidate_path.exists():
                         break
                     duration = wav_duration(candidate_path)
-                    if context_seconds + duration > args.left_audio_context_seconds and context_records:
+                    if (
+                        context_seconds + duration > args.left_audio_context_seconds
+                        and context_records
+                    ):
                         break
                     context_records.append((cursor + 1, candidate, candidate_path))
                     context_seconds += duration
@@ -1921,16 +2259,21 @@ def evaluate_single_chunk_strategy(
                     context_records.reverse()
                     concat_path = temp_dir / f"left-context-{index:05d}.wav"
                     durations = concatenate_wavs(
-                        [path for _row_index, _candidate, path in context_records] + [audio_path],
+                        [path for _row_index, _candidate, path in context_records]
+                        + [audio_path],
                         concat_path,
                     )
                     include_after_seconds = sum(durations[:-1])
                     transcribe_path = concat_path
                     base_detail["left_audio_context"] = {
                         "metadata_line_numbers": [
-                            candidate.get("_line_number") for _row_index, candidate, _path in context_records
+                            candidate.get("_line_number")
+                            for _row_index, candidate, _path in context_records
                         ],
-                        "file_names": [candidate.get("file_name") for _row_index, candidate, _path in context_records],
+                        "file_names": [
+                            candidate.get("file_name")
+                            for _row_index, candidate, _path in context_records
+                        ],
                         "audio_seconds": include_after_seconds,
                     }
 
@@ -1950,7 +2293,9 @@ def evaluate_single_chunk_strategy(
 
         if index == 1 or index % 10 == 0 or index == len(metadata):
             ok_count = sum(1 for row in details if row.get("status") == "ok")
-            print(f"[{strategy}] Processed {index}/{len(metadata)} rows ({ok_count} scored).")
+            print(
+                f"[{strategy}] Processed {index}/{len(metadata)} rows ({ok_count} scored)."
+            )
     return details
 
 
@@ -1970,7 +2315,9 @@ def evaluate_merged_deferred_short(
         group = [record]
         duration = float(record.get("speech_duration") or 0.0)
         if duration <= args.short_utterance_seconds:
-            while len(group) < args.merge_max_chunks and index + len(group) < len(metadata):
+            while len(group) < args.merge_max_chunks and index + len(group) < len(
+                metadata
+            ):
                 candidate = metadata[index + len(group)]
                 previous = group[-1]
                 gap = source_gap_seconds(previous, candidate)
@@ -1979,7 +2326,10 @@ def evaluate_merged_deferred_short(
                 if gap is not None and gap > args.context_max_gap_seconds:
                     break
                 candidate_duration = float(candidate.get("speech_duration") or 0.0)
-                if duration + candidate_duration > args.merge_max_seconds and len(group) > 1:
+                if (
+                    duration + candidate_duration > args.merge_max_seconds
+                    and len(group) > 1
+                ):
                     break
                 group.append(candidate)
                 duration += candidate_duration
@@ -2001,12 +2351,16 @@ def evaluate_merged_deferred_short(
             "sample_id": group[0].get("_sample_id")
             if len(group) == 1
             else "+".join(str(item.get("_sample_id")) for item in group),
-            "index": index + 1 if len(group) == 1 else f"{index + 1}-{index + len(group)}",
+            "index": index + 1
+            if len(group) == 1
+            else f"{index + 1}-{index + len(group)}",
             "metadata_line_number": first_line,
             "metadata_line_numbers": [item.get("_line_number") for item in group],
             "file_name": group[0].get("file_name") if len(group) == 1 else None,
             "file_names": [item.get("file_name") for item in group],
-            "audio_path": str(audio_paths[0]) if len(group) == 1 and audio_paths[0] else None,
+            "audio_path": str(audio_paths[0])
+            if len(group) == 1 and audio_paths[0]
+            else None,
             "audio_paths": [str(path) if path else None for path in audio_paths],
             "reference": reference,
             "language_label": language_label,
@@ -2018,7 +2372,9 @@ def evaluate_merged_deferred_short(
             "speech_duration": duration,
             "duration_seconds": duration,
             "contains_short_utterance": any(
-                float(item.get("speech_duration") or 0.0) <= args.short_utterance_seconds for item in group
+                float(item.get("speech_duration") or 0.0)
+                <= args.short_utterance_seconds
+                for item in group
             ),
             "merged_chunk_count": len(group),
             "english_terms": english_terms_from_text(
@@ -2037,43 +2393,71 @@ def evaluate_merged_deferred_short(
                 "rolling_prompt_chars": args.rolling_prompt_chars,
                 "runtime_prompt_chars": len(build_common_prompt(args, group) or ""),
                 "runtime_prompt_hash": (
-                    sha256_json(build_common_prompt(args, group)) if build_common_prompt(args, group) else None
+                    sha256_json(build_common_prompt(args, group))
+                    if build_common_prompt(args, group)
+                    else None
                 ),
             },
         }
 
         has_missing_path = any(path is None for path in audio_paths)
-        missing_file = next((path for path in audio_paths if path is not None and not path.exists()), None)
+        missing_file = next(
+            (path for path in audio_paths if path is not None and not path.exists()),
+            None,
+        )
         if not has_missing_path and missing_file is None:
             try:
                 transcribe_path = audio_paths[0]
                 if len(group) > 1:
                     transcribe_path = temp_dir / f"merged-{first_line}-{last_line}.wav"
-                    concatenate_wavs([path for path in audio_paths if path is not None], transcribe_path)
+                    concatenate_wavs(
+                        [path for path in audio_paths if path is not None],
+                        transcribe_path,
+                    )
                 if transcribe_path is None:
                     raise ValueError("No audio path for merged group")
                 prediction, transcribe_info = transcribe_one(
-                    model, transcribe_path, args, initial_prompt=build_common_prompt(args, group)
+                    model,
+                    transcribe_path,
+                    args,
+                    initial_prompt=build_common_prompt(args, group),
                 )
                 detail = score_prediction(base_detail, prediction, transcribe_info)
             except Exception as exc:
-                detail = {**base_detail, "status": "transcribe_failed", "error": repr(exc)}
+                detail = {
+                    **base_detail,
+                    "status": "transcribe_failed",
+                    "error": repr(exc),
+                }
         elif has_missing_path:
-            detail = {**base_detail, "status": "missing_audio_path", "error": "No file_name/path/audio.path"}
+            detail = {
+                **base_detail,
+                "status": "missing_audio_path",
+                "error": "No file_name/path/audio.path",
+            }
         else:
-            detail = {**base_detail, "status": "missing_audio_file", "error": f"Not found: {missing_file}"}
+            detail = {
+                **base_detail,
+                "status": "missing_audio_file",
+                "error": f"Not found: {missing_file}",
+            }
         details.append(detail)
 
         processed = index + len(group)
         if processed == 1 or processed % 10 == 0 or processed == len(metadata):
             ok_count = sum(1 for row in details if row.get("status") == "ok")
-            print(f"[merged_deferred_short] Processed {processed}/{len(metadata)} rows ({ok_count} groups scored).")
+            print(
+                f"[merged_deferred_short] Processed {processed}/{len(metadata)} rows ({ok_count} groups scored)."
+            )
         index += len(group)
     return details
 
 
 def output_completeness_error(
-    details: list[dict[str, Any]], models: list[str], strategies: list[str], metadata: list[dict[str, Any]]
+    details: list[dict[str, Any]],
+    models: list[str],
+    strategies: list[str],
+    metadata: list[dict[str, Any]],
 ) -> str | None:
     expected = {
         (model, strategy, str(record.get("_sample_id")))
@@ -2082,15 +2466,28 @@ def output_completeness_error(
         for record in metadata
     }
     actual_keys = [
-        (str(row.get("model_name")), str(row.get("strategy")), str(row.get("sample_id"))) for row in details
+        (
+            str(row.get("model_name")),
+            str(row.get("strategy")),
+            str(row.get("sample_id")),
+        )
+        for row in details
     ]
     counts = Counter(actual_keys)
     actual = set(actual_keys)
     missing = sorted(expected - actual)
     unexpected = sorted(actual - expected)
     duplicates = sorted(key for key, count in counts.items() if count != 1)
-    non_ok = [key for key, row in zip(actual_keys, details) if row.get("status") != "ok"]
-    if len(actual_keys) == len(expected) and not missing and not unexpected and not duplicates and not non_ok:
+    non_ok = [
+        key for key, row in zip(actual_keys, details) if row.get("status") != "ok"
+    ]
+    if (
+        len(actual_keys) == len(expected)
+        and not missing
+        and not unexpected
+        and not duplicates
+        and not non_ok
+    ):
         return None
     return (
         f"Incomplete benchmark output: expected exactly {len(expected)} model×strategy×sample rows, "
@@ -2136,18 +2533,24 @@ def main() -> int:
         )
         return 0
 
-    strategy_suffix = args.strategy if len(strategies) == 1 else "benchmark_" + "_".join(strategies)
+    strategy_suffix = (
+        args.strategy if len(strategies) == 1 else "benchmark_" + "_".join(strategies)
+    )
     model_suffix = model_set_suffix(models)
     run_id = f"{utc_stamp()}_{model_suffix}_{safe_name(strategy_suffix)}"
     details_path = args.output_dir / f"details_{run_id}.jsonl"
     summary_path = args.output_dir / f"summary_{run_id}.json"
 
     try:
-        requested_sample_ids, selection_mode, manifest_source = parse_requested_sample_ids(args)
+        requested_sample_ids, selection_mode, manifest_source = (
+            parse_requested_sample_ids(args)
+        )
         args.selection_mode = selection_mode
         metadata_limit = None if requested_sample_ids is not None else args.limit
         metadata_all = read_metadata(args.dataset_dir, metadata_limit)
-        metadata = select_metadata(metadata_all, requested_sample_ids, args.sample_id_field)
+        metadata = select_metadata(
+            metadata_all, requested_sample_ids, args.sample_id_field
+        )
         split_identity = (
             validate_selected_split(metadata, args.split_manifest, args.required_split)
             if args.split_manifest is not None
@@ -2213,9 +2616,13 @@ def main() -> int:
         temp_dir = Path(temp_name)
         for model_name in models:
             model_info = model_identity(model_name)
-            print(f"Loading faster-whisper model {model_name!r} on {args.device} ({args.compute_type})...")
+            print(
+                f"Loading faster-whisper model {model_name!r} on {args.device} ({args.compute_type})..."
+            )
             try:
-                model = WhisperModel(model_name, device=args.device, compute_type=args.compute_type)
+                model = WhisperModel(
+                    model_name, device=args.device, compute_type=args.compute_type
+                )
             except Exception as exc:
                 for strategy in strategies:
                     for index, record in enumerate(metadata, start=1):
@@ -2224,7 +2631,9 @@ def main() -> int:
                                 **base_detail_for_record(
                                     index=index,
                                     record=record,
-                                    audio_path=resolve_audio_path(args.dataset_dir, record),
+                                    audio_path=resolve_audio_path(
+                                        args.dataset_dir, record
+                                    ),
                                     reference=str(record.get("text", "")),
                                     strategy=strategy,
                                     model_info=model_info,
@@ -2260,7 +2669,9 @@ def main() -> int:
             gc.collect()
 
     write_jsonl(details_path, details)
-    completeness_message = output_completeness_error(details, models, strategies, metadata)
+    completeness_message = output_completeness_error(
+        details, models, strategies, metadata
+    )
     summary = build_summary(
         args=args,
         status="failed" if completeness_message else "ok",

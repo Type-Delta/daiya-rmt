@@ -116,13 +116,17 @@ def test_manifest_ids_are_enforced_exactly_once(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="missing IDs"):
         asr_eval.select_metadata(metadata, ["missing"], "sample_id")
     with pytest.raises(ValueError, match="metadata duplicates"):
-        asr_eval.select_metadata(metadata + [{"sample_id": "a", "text": "again"}], ["a"], "sample_id")
+        asr_eval.select_metadata(
+            metadata + [{"sample_id": "a", "text": "again"}], ["a"], "sample_id"
+        )
 
 
 def test_micro_aggregation_uses_counts_not_percentage_average() -> None:
     rows = [
         make_row(sample_id="a", reference="abcd", hypothesis="abxd"),
-        make_row(sample_id="b", reference="abcdefghijklmnop", hypothesis="abcdefghijklmnop"),
+        make_row(
+            sample_id="b", reference="abcdefghijklmnop", hypothesis="abcdefghijklmnop"
+        ),
     ]
 
     aggregate = asr_eval.aggregate_metric_rows(rows)
@@ -247,13 +251,19 @@ def test_paired_bootstrap_delta_is_deterministic_and_rejects_mismatch() -> None:
         make_row(sample_id="a", reference="abcd", hypothesis="abcd", model_name="m3"),
         make_row(sample_id="b", reference="wxyz", hypothesis="wxyz", model_name="m3"),
     ]
-    first = asr_eval.paired_bootstrap_delta(left, right, metric="cer", samples=200, seed=7)
-    second = asr_eval.paired_bootstrap_delta(left, right, metric="cer", samples=200, seed=7)
+    first = asr_eval.paired_bootstrap_delta(
+        left, right, metric="cer", samples=200, seed=7
+    )
+    second = asr_eval.paired_bootstrap_delta(
+        left, right, metric="cer", samples=200, seed=7
+    )
     assert first == second
     assert first["left_minus_right"] > 0
     assert first["method"] == "paired_contiguous_moving_block_bootstrap"
     with pytest.raises(ValueError, match="sample sets differ"):
-        asr_eval.paired_bootstrap_delta(left, right[:1], metric="cer", samples=10, seed=7)
+        asr_eval.paired_bootstrap_delta(
+            left, right[:1], metric="cer", samples=10, seed=7
+        )
 
 
 def test_split_manifest_linkage_and_rolling_order(tmp_path: Path) -> None:
@@ -312,7 +322,9 @@ def test_context_terms_prompt_is_opt_in_and_causal(tmp_path: Path) -> None:
     )
 
 
-def test_rolling_prompt_resets_on_source_time_gap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_rolling_prompt_resets_on_source_time_gap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     args = make_args(tmp_path)
     args.requested_strategies = ["rolling_initial_prompt"]
     audio = tmp_path / "chunk.wav"
@@ -339,7 +351,9 @@ def test_rolling_prompt_resets_on_source_time_gap(tmp_path: Path, monkeypatch: p
     ]
     prompts = []
 
-    def fake_transcribe(_model, _path, _args, *, initial_prompt=None, include_after_seconds=None):
+    def fake_transcribe(
+        _model, _path, _args, *, initial_prompt=None, include_after_seconds=None
+    ):
         prompts.append(initial_prompt)
         return f"hypothesis-{len(prompts)}", {"elapsed_seconds": 0.1, "peak_memory": {}}
 
@@ -361,23 +375,39 @@ def test_rolling_prompt_resets_on_source_time_gap(tmp_path: Path, monkeypatch: p
 def test_output_completeness_requires_exact_ok_cartesian_product() -> None:
     metadata = [{"_sample_id": "a"}, {"_sample_id": "b"}]
     complete = [
-        {"model_name": "m", "strategy": "isolated", "sample_id": sample_id, "status": "ok"}
+        {
+            "model_name": "m",
+            "strategy": "isolated",
+            "sample_id": sample_id,
+            "status": "ok",
+        }
         for sample_id in ("a", "b")
     ]
 
-    assert asr_eval.output_completeness_error(complete, ["m"], ["isolated"], metadata) is None
+    assert (
+        asr_eval.output_completeness_error(complete, ["m"], ["isolated"], metadata)
+        is None
+    )
     assert "expected exactly 2" in asr_eval.output_completeness_error(
         complete[:1], ["m"], ["isolated"], metadata
     )
     failed = [{**complete[0], "status": "transcribe_failed"}, complete[1]]
-    assert "non_ok" in asr_eval.output_completeness_error(failed, ["m"], ["isolated"], metadata)
+    assert "non_ok" in asr_eval.output_completeness_error(
+        failed, ["m"], ["isolated"], metadata
+    )
 
 
 def test_memory_aggregation_labels_endpoint_snapshots_honestly() -> None:
-    aggregate = asr_eval.aggregate_memory_rows([make_row(sample_id="a", reference="a", hypothesis="a")])
+    aggregate = asr_eval.aggregate_memory_rows(
+        [make_row(sample_id="a", reference="a", hypothesis="a")]
+    )
 
     assert aggregate["memory_aggregation_method"] == "max_endpoint_snapshots"
-    assert aggregate["max_endpoint_ram_rss_bytes"] == aggregate["peak_ram_rss_bytes"] == 1000
+    assert (
+        aggregate["max_endpoint_ram_rss_bytes"]
+        == aggregate["peak_ram_rss_bytes"]
+        == 1000
+    )
 
 
 def test_main_fails_summary_when_faster_whisper_is_missing(
@@ -397,15 +427,56 @@ def test_main_fails_summary_when_faster_whisper_is_missing(
 
     assert exit_code == 1
     assert len(summaries) == 1
-    assert asr_eval.json.loads(summaries[0].read_text(encoding="utf-8"))["status"] == "failed"
+    assert (
+        asr_eval.json.loads(summaries[0].read_text(encoding="utf-8"))["status"]
+        == "failed"
+    )
 
 
 def test_model_set_suffix_is_short_and_deterministic() -> None:
-    models = [rf"C:\very\long\model-root\{'segment-' * 20}{index}\model.bin" for index in range(4)]
+    models = [
+        rf"C:\very\long\model-root\{'segment-' * 20}{index}\model.bin"
+        for index in range(4)
+    ]
 
     suffix = asr_eval.model_set_suffix(models)
 
     assert suffix == asr_eval.model_set_suffix(list(models))
     assert suffix.startswith("models-4-")
     assert len(suffix) < 32
-    assert asr_eval.model_set_suffix([r"C:\runs\checkpoint-588-ct2"]) == "checkpoint-588-ct2"
+    assert (
+        asr_eval.model_set_suffix([r"C:\runs\checkpoint-588-ct2"])
+        == "checkpoint-588-ct2"
+    )
+
+
+def test_model_strategy_summaries_keep_cells_separate() -> None:
+    rows = [
+        {
+            **make_row(
+                sample_id=f"{model}-{strategy}", reference="ab", hypothesis=hypothesis
+            ),
+            "model_name": model,
+            "strategy": strategy,
+            "language_label": "Thai",
+            "mixed_bucket": "mixed",
+        }
+        for model, strategy, hypothesis in (
+            ("m2", "isolated", "a"),
+            ("m2", "rolling_initial_prompt", "ab"),
+            ("m3", "isolated", "ab"),
+            ("m3", "rolling_initial_prompt", "a"),
+        )
+    ]
+
+    summaries = asr_eval.model_strategy_summaries(
+        rows,
+        short_utterance_seconds=3.0,
+        bootstrap_samples=10,
+        bootstrap_seed=7,
+        bootstrap_block_size=2,
+    )
+
+    assert summaries["m2"]["isolated"]["overall"]["micro_cer"] == 0.5
+    assert summaries["m2"]["rolling_initial_prompt"]["overall"]["micro_cer"] == 0.0
+    assert summaries["m3"]["isolated"]["by_language"]["Thai"]["count"] == 1
