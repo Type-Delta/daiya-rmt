@@ -1,0 +1,16 @@
+{
+  "status": "reconstructed",
+  "source_commit": "8f256d329cbdd65dc491133401d04cb0ab864392",
+  "source_pr": 9,
+  "split_expression": "dataset[\"train\"].train_test_split(test_size=0.05, seed=42)",
+  "dataset_metadata_sha256": "9d56736b055df552fa20b325fce0720b87d4bd29f0b166fd4d1197d87874a028",
+  "total_rows": 7091,
+  "legacy_train_rows": 6736,
+  "legacy_validation_rows": 355,
+  "source_11": {
+    "total_rows": 1651,
+    "legacy_train_rows": 1574,
+    "legacy_validation_rows": 77
+  },
+  "conclusion": "Source 11 was not held out by conversation for the legacy M2/M3 split."
+}

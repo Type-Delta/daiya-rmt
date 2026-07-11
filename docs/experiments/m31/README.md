@@ -62,7 +62,7 @@ Both strategies receive the same causal per-row technical-term prompt derived on
 
 ## Known limitation before interpreting results
 
-Legacy M2 and M3 used a row-random split that placed chunks from every source conversation in training and validation. Source 11 is held out from M3.1 but contaminated for the frozen M2/M3 baselines. Therefore:
+Legacy M2 and M3 used a seeded row-random 5% validation split over the complete AudioFolder training table, reconstructed from PR #9 commit `8f256d329cbdd65dc491133401d04cb0ab864392` (`dataset["train"].train_test_split(test_size=0.05, seed=42)`). Replaying that exact split on the frozen metadata assigns 1,574 source-11 rows to legacy training and 77 to validation. Source 11 is held out from M3.1 but contaminated for the frozen M2/M3 baselines. Therefore:
 
 - M2/M3 reruns are descriptive runtime baselines, not unbiased training-method controls.
 - A positive M3.1 result despite the legacy exposure advantage is encouraging but still narrow.
