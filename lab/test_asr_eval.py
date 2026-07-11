@@ -398,3 +398,14 @@ def test_main_fails_summary_when_faster_whisper_is_missing(
     assert exit_code == 1
     assert len(summaries) == 1
     assert asr_eval.json.loads(summaries[0].read_text(encoding="utf-8"))["status"] == "failed"
+
+
+def test_model_set_suffix_is_short_and_deterministic() -> None:
+    models = [rf"C:\very\long\model-root\{'segment-' * 20}{index}\model.bin" for index in range(4)]
+
+    suffix = asr_eval.model_set_suffix(models)
+
+    assert suffix == asr_eval.model_set_suffix(list(models))
+    assert suffix.startswith("models-4-")
+    assert len(suffix) < 32
+    assert asr_eval.model_set_suffix([r"C:\runs\checkpoint-588-ct2"]) == "checkpoint-588-ct2"

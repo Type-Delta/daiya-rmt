@@ -265,6 +265,16 @@ def safe_name(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._") or "model"
 
 
+def model_set_suffix(models: list[str]) -> str:
+    """Return a short deterministic filename component; full model identities stay in JSON."""
+    if len(models) == 1:
+        leaf = Path(models[0]).name or models[0]
+        safe_leaf = safe_name(leaf)
+        if len(safe_leaf) <= 64:
+            return safe_leaf
+    return f"models-{len(models)}-{sha256_json(models)[:12]}"
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -2127,8 +2137,8 @@ def main() -> int:
         return 0
 
     strategy_suffix = args.strategy if len(strategies) == 1 else "benchmark_" + "_".join(strategies)
-    model_suffix = "_".join(safe_name(model) for model in models)
-    run_id = f"{utc_stamp()}_{safe_name(model_suffix)}_{safe_name(strategy_suffix)}"
+    model_suffix = model_set_suffix(models)
+    run_id = f"{utc_stamp()}_{model_suffix}_{safe_name(strategy_suffix)}"
     details_path = args.output_dir / f"details_{run_id}.jsonl"
     summary_path = args.output_dir / f"summary_{run_id}.json"
 
