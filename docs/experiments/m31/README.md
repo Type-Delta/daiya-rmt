@@ -1,6 +1,6 @@
 # M3.1: generation-gated prompt-conditioned Whisper
 
-Status: implementation and protocol frozen; results pending full training and benchmark.
+Status: full training and corrected rolling checkpoint selection are complete; isolated selection and the primary benchmark are pending.
 
 ## Objective
 
@@ -10,6 +10,9 @@ M3.1 combines M3's causal `context_before` terms-only Whisper prompt conditionin
 
 - Metadata SHA-256: `9d56736b055df552fa20b325fce0720b87d4bd29f0b166fd4d1197d87874a028`
 - Split manifest: `m31-split-v1.jsonl`
+- Split manifest SHA-256: `16d9655b0a57839b4562bb72e3114c949592a641b294b7586b490ffe07d80ad3`
+- Generation selector SHA-256: `62837673770ca5c08883185ac5e6188b02a6b95e80be4d1337bf1d9a4099dd28` (128 rows)
+- Benchmark manifest SHA-256: `8d13aa10e6863039f3736587947c6d3658f819a59d2bf142296b861dc3af582e` (128 rows)
 - Train conversations: 01, 02, 05, 06, 07, 08, 09, 10 (4,696 rows)
 - Validation/selector conversations: 03, 04 (744 rows)
 - Benchmark quarantine conversation: 11 (1,651 rows)
@@ -44,7 +47,7 @@ Every saved checkpoint and the final adapter are scored on all 128 frozen select
 Two generation contexts are recorded:
 
 1. `isolated`
-2. `rolling-initial-prompt`, with per-row causal terms plus up to three previous hypotheses / 512 characters, reset at conversation boundaries
+2. `rolling-initial-prompt`, with per-row causal terms plus up to three previous hypotheses / 512 characters, reset at conversation boundaries and source-time gaps above 1.5 seconds
 
 The runtime-aligned rolling selection is the M3.1 delivery checkpoint. Isolated results are reported as an ablation. Eval-loss-best and final checkpoints from the same run are benchmarked where conversion time permits, separating checkpoint-selection gain from the combined training-method result.
 
@@ -55,7 +58,7 @@ M2, M3, and M3.1 use exactly `m31-benchmark-v1.jsonl` with the same faster-whisp
 - isolated
 - rolling initial prompt
 
-Raw JSONL includes per-sample edit counts, prompt hashes, latency, target/processed-audio RTF, RAM, process GPU-memory snapshots, model/dataset/manifest fingerprints, and failures. Summary JSON includes micro CER/WER-like, language/mixed/short/source breakdowns, and paired bootstrap confidence intervals on model deltas.
+Both strategies receive the same causal per-row technical-term prompt derived only from `context_before`; rolling additionally receives recent hypotheses. Raw JSONL includes per-sample edit counts, prompt hashes, latency, target/processed-audio RTF, endpoint RAM/process GPU-memory snapshots, model/dataset/manifest fingerprints, and failures. Summary JSON includes micro CER/WER-like, language/mixed/short/source breakdowns, and contiguous-block bootstrap intervals on model deltas. Because the benchmark has one source conversation, intervals describe chunk-level variation and cannot estimate between-conversation uncertainty.
 
 ## Known limitation before interpreting results
 

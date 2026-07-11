@@ -65,10 +65,15 @@ def make_args(tmp_path: Path) -> Namespace:
         model=None,
         models=None,
         models_list=["m2", "m3"],
+        compare_raw=None,
+        limit=None,
+        sample_ids=None,
+        sample_id_field="sample_id",
         device="cpu",
         compute_type="default",
         language=None,
         initial_prompt=None,
+        include_context_technical_terms=False,
         beam_size=5,
         no_condition_on_previous_text=False,
         strategy="isolated",
@@ -89,6 +94,7 @@ def make_args(tmp_path: Path) -> Namespace:
         selection_mode="manifest",
         bootstrap_samples=100,
         bootstrap_seed=1234,
+        bootstrap_block_size=8,
     )
 
 
@@ -207,6 +213,15 @@ def test_bootstrap_confidence_intervals_are_deterministic() -> None:
 
     assert first == second
     assert first["p2_5"] <= first["p50"] <= first["p97_5"]
+    assert first["method"] == "contiguous_moving_block_bootstrap"
+    assert first["block_size"] == 8
+
+
+def test_contiguous_block_resampling_preserves_fixed_blocks() -> None:
+    indices = asr_eval.contiguous_block_indices(10, 3, asr_eval.random.Random(4))
+
+    assert len(indices) == 10
+    assert all(indices[index + 1] == indices[index] + 1 for index in (0, 1, 3, 4, 6, 7))
 
 
 def test_raw_comparison_rejects_incompatible_fingerprints(tmp_path: Path) -> None:
@@ -236,6 +251,7 @@ def test_paired_bootstrap_delta_is_deterministic_and_rejects_mismatch() -> None:
     second = asr_eval.paired_bootstrap_delta(left, right, metric="cer", samples=200, seed=7)
     assert first == second
     assert first["left_minus_right"] > 0
+    assert first["method"] == "paired_contiguous_moving_block_bootstrap"
     with pytest.raises(ValueError, match="sample sets differ"):
         asr_eval.paired_bootstrap_delta(left, right[:1], metric="cer", samples=10, seed=7)
 
@@ -273,3 +289,112 @@ def test_split_manifest_linkage_and_rolling_order(tmp_path: Path) -> None:
         )
     with pytest.raises(ValueError, match="out of source-time order"):
         asr_eval.validate_rolling_order([selected[1], selected[0]])
+
+
+def test_context_terms_prompt_is_opt_in_and_causal(tmp_path: Path) -> None:
+    args = make_args(tmp_path)
+    args.initial_prompt = "Base"
+    row = {
+        "context_before": "Deploy Kubernetes with CUDA_API.",
+        "context_after": "SECRET_AFTER_TERM",
+        "text": "REFERENCE_LEAK",
+    }
+
+    assert asr_eval.build_common_prompt(args, [row]) == "Base"
+    args.include_context_technical_terms = True
+    prompt = asr_eval.build_common_prompt(args, [row])
+
+    assert prompt is not None
+    assert "Kubernetes" in prompt and "CUDA_API" in prompt
+    assert "SECRET_AFTER_TERM" not in prompt and "REFERENCE_LEAK" not in prompt
+    assert "Previous transcript: recent hypothesis" in asr_eval.build_rolling_prompt(
+        args, ["recent hypothesis"], [row]
+    )
+
+
+def test_rolling_prompt_resets_on_source_time_gap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    args = make_args(tmp_path)
+    args.requested_strategies = ["rolling_initial_prompt"]
+    audio = tmp_path / "chunk.wav"
+    audio.write_bytes(b"not read by mocked transcription")
+    rows = [
+        {
+            "_sample_id": "a",
+            "_line_number": 1,
+            "file_name": audio.name,
+            "source_file": "session.wav",
+            "source_start": 0.0,
+            "source_end": 1.0,
+            "text": "one",
+        },
+        {
+            "_sample_id": "b",
+            "_line_number": 2,
+            "file_name": audio.name,
+            "source_file": "session.wav",
+            "source_start": 5.0,
+            "source_end": 6.0,
+            "text": "two",
+        },
+    ]
+    prompts = []
+
+    def fake_transcribe(_model, _path, _args, *, initial_prompt=None, include_after_seconds=None):
+        prompts.append(initial_prompt)
+        return f"hypothesis-{len(prompts)}", {"elapsed_seconds": 0.1, "peak_memory": {}}
+
+    monkeypatch.setattr(asr_eval, "transcribe_one", fake_transcribe)
+    details = asr_eval.evaluate_single_chunk_strategy(
+        model=object(),
+        model_info={"name": "m2"},
+        metadata=rows,
+        args=args,
+        strategy="rolling_initial_prompt",
+        temp_dir=tmp_path,
+        run_metadata={"decode_config": {}},
+    )
+
+    assert [row["status"] for row in details] == ["ok", "ok"]
+    assert prompts == [None, None]
+
+
+def test_output_completeness_requires_exact_ok_cartesian_product() -> None:
+    metadata = [{"_sample_id": "a"}, {"_sample_id": "b"}]
+    complete = [
+        {"model_name": "m", "strategy": "isolated", "sample_id": sample_id, "status": "ok"}
+        for sample_id in ("a", "b")
+    ]
+
+    assert asr_eval.output_completeness_error(complete, ["m"], ["isolated"], metadata) is None
+    assert "expected exactly 2" in asr_eval.output_completeness_error(
+        complete[:1], ["m"], ["isolated"], metadata
+    )
+    failed = [{**complete[0], "status": "transcribe_failed"}, complete[1]]
+    assert "non_ok" in asr_eval.output_completeness_error(failed, ["m"], ["isolated"], metadata)
+
+
+def test_memory_aggregation_labels_endpoint_snapshots_honestly() -> None:
+    aggregate = asr_eval.aggregate_memory_rows([make_row(sample_id="a", reference="a", hypothesis="a")])
+
+    assert aggregate["memory_aggregation_method"] == "max_endpoint_snapshots"
+    assert aggregate["max_endpoint_ram_rss_bytes"] == aggregate["peak_ram_rss_bytes"] == 1000
+
+
+def test_main_fails_summary_when_faster_whisper_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = make_args(tmp_path)
+    args.model = "m2"
+    args.models_list = ["m2"]
+    (tmp_path / "metadata.jsonl").write_text(
+        '{"sample_id":"a","file_name":"a.wav","text":"hello"}\n', encoding="utf-8"
+    )
+    monkeypatch.setattr(asr_eval, "parse_args", lambda: args)
+    monkeypatch.setattr(asr_eval, "load_faster_whisper", lambda: None)
+
+    exit_code = asr_eval.main()
+    summaries = list(tmp_path.glob("summary_*.json"))
+
+    assert exit_code == 1
+    assert len(summaries) == 1
+    assert asr_eval.json.loads(summaries[0].read_text(encoding="utf-8"))["status"] == "failed"

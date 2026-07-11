@@ -158,6 +158,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--language", default=None, help="Optional language hint passed to transcribe().")
     parser.add_argument("--initial-prompt", default=None, help="Optional prompt passed to transcribe().")
     parser.add_argument(
+        "--include-context-technical-terms",
+        action="store_true",
+        help="Add technical terms derived only from each row's context_before to its prompt.",
+    )
+    parser.add_argument(
         "--dataset-dir",
         type=Path,
         default=DEFAULT_DATASET_DIR,
@@ -242,6 +247,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=1337,
         help="Seed for deterministic bootstrap confidence intervals.",
+    )
+    parser.add_argument(
+        "--bootstrap-block-size",
+        type=int,
+        default=8,
+        help="Contiguous moving-block size used for deterministic bootstrap resampling.",
     )
     return parser.parse_args()
 
@@ -529,6 +540,7 @@ def decode_config_payload(args: argparse.Namespace, strategies: list[str]) -> di
     return {
         "language": args.language,
         "initial_prompt": args.initial_prompt,
+        "include_context_technical_terms": args.include_context_technical_terms,
         "beam_size": args.beam_size,
         "condition_on_previous_text": not args.no_condition_on_previous_text,
         "strategies": strategies,
@@ -540,6 +552,7 @@ def decode_config_payload(args: argparse.Namespace, strategies: list[str]) -> di
         "merge_max_seconds": args.merge_max_seconds,
         "merge_max_chunks": args.merge_max_chunks,
         "bootstrap_seed": args.bootstrap_seed,
+        "bootstrap_block_size": args.bootstrap_block_size,
     }
 
 
@@ -1005,10 +1018,29 @@ def aggregate_memory_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
             ram_values.append(peak["ram_rss_bytes"])
         if isinstance(peak.get("gpu_peak_bytes"), int):
             gpu_values.append(peak["gpu_peak_bytes"])
+    max_ram = max(ram_values) if ram_values else None
+    max_gpu = max(gpu_values) if gpu_values else None
     return {
-        "peak_ram_rss_bytes": max(ram_values) if ram_values else None,
-        "peak_gpu_bytes": max(gpu_values) if gpu_values else None,
+        "memory_aggregation_method": "max_endpoint_snapshots",
+        "max_endpoint_ram_rss_bytes": max_ram,
+        "max_endpoint_gpu_bytes": max_gpu,
+        # Compatibility aliases; these are endpoint snapshots, not sampled process peaks.
+        "peak_ram_rss_bytes": max_ram,
+        "peak_gpu_bytes": max_gpu,
     }
+
+
+def contiguous_block_indices(length: int, block_size: int, rng: random.Random) -> list[int]:
+    if block_size <= 0:
+        raise ValueError("bootstrap block size must be positive")
+    if length <= 0:
+        return []
+    width = min(block_size, length)
+    indices: list[int] = []
+    while len(indices) < length:
+        start = rng.randrange(length - width + 1)
+        indices.extend(range(start, start + width))
+    return indices[:length]
 
 
 def aggregate_metric_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1043,6 +1075,7 @@ def bootstrap_micro_ci(
     metric: str,
     samples: int,
     seed: int,
+    block_size: int = 8,
 ) -> dict[str, Any] | None:
     if not rows or samples <= 0:
         return None
@@ -1060,8 +1093,8 @@ def bootstrap_micro_ci(
     for _ in range(samples):
         distance = 0
         length = 0
-        for _index in range(len(pairs)):
-            sample_distance, sample_length = pairs[rng.randrange(len(pairs))]
+        for index in contiguous_block_indices(len(pairs), block_size, rng):
+            sample_distance, sample_length = pairs[index]
             distance += sample_distance
             length += sample_length
         rate = error_rate(distance, length)
@@ -1070,6 +1103,8 @@ def bootstrap_micro_ci(
     return {
         "seed": seed,
         "samples": samples,
+        "block_size": block_size,
+        "method": "contiguous_moving_block_bootstrap",
         "p2_5": percentile(values, 2.5),
         "p50": percentile(values, 50),
         "p97_5": percentile(values, 97.5),
@@ -1082,12 +1117,16 @@ def add_uncertainty(
     *,
     samples: int,
     seed: int,
+    block_size: int,
 ) -> dict[str, Any]:
     aggregate = dict(aggregate)
     aggregate["uncertainty"] = {
-        "method": "paired_bootstrap_by_sample",
-        "micro_cer": bootstrap_micro_ci(rows, metric="cer", samples=samples, seed=seed),
-        "micro_wer_like": bootstrap_micro_ci(rows, metric="wer_like", samples=samples, seed=seed + 1),
+        "method": "contiguous_moving_block_bootstrap",
+        "block_size": block_size,
+        "micro_cer": bootstrap_micro_ci(rows, metric="cer", samples=samples, seed=seed, block_size=block_size),
+        "micro_wer_like": bootstrap_micro_ci(
+            rows, metric="wer_like", samples=samples, seed=seed + 1, block_size=block_size
+        ),
     }
     return aggregate
 
@@ -1099,6 +1138,7 @@ def paired_bootstrap_delta(
     metric: str,
     samples: int,
     seed: int,
+    block_size: int = 8,
 ) -> dict[str, Any]:
     left_by_id = {str(row.get("sample_id")): row for row in left_rows}
     right_by_id = {str(row.get("sample_id")): row for row in right_rows}
@@ -1110,7 +1150,7 @@ def paired_bootstrap_delta(
         raise ValueError(
             f"Paired comparison sample sets differ; missing left={missing_left}, missing right={missing_right}."
         )
-    sample_ids = sorted(left_by_id)
+    sample_ids = [str(row.get("sample_id")) for row in left_rows]
     distance_key = f"{metric}_distance"
     length_key = f"{metric}_reference_length"
 
@@ -1132,7 +1172,7 @@ def paired_bootstrap_delta(
     rng = random.Random(seed)
     values = []
     for _ in range(max(0, samples)):
-        value = delta([rng.randrange(len(sample_ids)) for _ in sample_ids])
+        value = delta(contiguous_block_indices(len(sample_ids), block_size, rng))
         if value is not None:
             values.append(value)
     return {
@@ -1140,6 +1180,8 @@ def paired_bootstrap_delta(
         "sample_count": len(sample_ids),
         "seed": seed,
         "samples": samples,
+        "block_size": block_size,
+        "method": "paired_contiguous_moving_block_bootstrap",
         "p2_5": percentile(values, 2.5),
         "p50": percentile(values, 50),
         "p97_5": percentile(values, 97.5),
@@ -1151,6 +1193,7 @@ def paired_model_delta_summaries(
     *,
     samples: int,
     seed: int,
+    block_size: int,
 ) -> dict[str, Any]:
     by_strategy_model: dict[str, dict[str, list[dict[str, Any]]]] = {}
     for row in rows:
@@ -1171,7 +1214,8 @@ def paired_model_delta_summaries(
                     "left_model": left,
                     "right_model": right,
                     "micro_cer": paired_bootstrap_delta(
-                        by_model[left], by_model[right], metric="cer", samples=samples, seed=seed + offset
+                        by_model[left], by_model[right], metric="cer", samples=samples, seed=seed + offset,
+                        block_size=block_size,
                     ),
                     "micro_wer_like": paired_bootstrap_delta(
                         by_model[left],
@@ -1179,6 +1223,7 @@ def paired_model_delta_summaries(
                         metric="wer_like",
                         samples=samples,
                         seed=seed + 10_000 + offset,
+                        block_size=block_size,
                     ),
                 }
                 offset += 1
@@ -1192,6 +1237,7 @@ def grouped_aggregates(
     *,
     bootstrap_samples: int,
     bootstrap_seed: int,
+    bootstrap_block_size: int,
     include_uncertainty: bool = False,
 ) -> dict[str, Any]:
     groups: dict[str, list[dict[str, Any]]] = {}
@@ -1208,6 +1254,7 @@ def grouped_aggregates(
                 groups[key],
                 samples=bootstrap_samples,
                 seed=bootstrap_seed + offset,
+                block_size=bootstrap_block_size,
             )
         result[key] = aggregate
     return result
@@ -1375,11 +1422,13 @@ def build_summary(
     )
     bootstrap_samples = getattr(args, "bootstrap_samples", 1000)
     bootstrap_seed = getattr(args, "bootstrap_seed", 1337)
+    bootstrap_block_size = getattr(args, "bootstrap_block_size", 8)
     overall_metrics = add_uncertainty(
         aggregate_metric_rows(scored),
         scored,
         samples=bootstrap_samples,
         seed=bootstrap_seed,
+        block_size=bootstrap_block_size,
     )
     model_names = sorted(
         {
@@ -1414,6 +1463,7 @@ def build_summary(
         "compute_type": args.compute_type,
         "language": args.language,
         "initial_prompt": args.initial_prompt,
+        "include_context_technical_terms": getattr(args, "include_context_technical_terms", False),
         "beam_size": args.beam_size,
         "condition_on_previous_text": not args.no_condition_on_previous_text,
         "strategy": args.strategy,
@@ -1446,6 +1496,7 @@ def build_summary(
         "decode_config": run_metadata.get("decode_config") if run_metadata else None,
         "bootstrap_seed": bootstrap_seed,
         "bootstrap_samples": bootstrap_samples,
+        "bootstrap_block_size": bootstrap_block_size,
         "rows_seen": rows_seen,
         "scored_count": len(scored),
         "failure_count": len(failures),
@@ -1460,6 +1511,7 @@ def build_summary(
             short_rows,
             samples=bootstrap_samples,
             seed=bootstrap_seed + 10,
+            block_size=bootstrap_block_size,
         ),
         "english_technical_term_subset": aggregate_metric_rows(term_rows),
         "by_language": grouped_aggregates(
@@ -1467,12 +1519,14 @@ def build_summary(
             "language_label",
             bootstrap_samples=bootstrap_samples,
             bootstrap_seed=bootstrap_seed + 100,
+            bootstrap_block_size=bootstrap_block_size,
         ),
         "by_mixed_bucket": grouped_aggregates(
             scored,
             "mixed_bucket",
             bootstrap_samples=bootstrap_samples,
             bootstrap_seed=bootstrap_seed + 200,
+            bootstrap_block_size=bootstrap_block_size,
             include_uncertainty=True,
         ),
         "by_source_file": grouped_aggregates(
@@ -1480,24 +1534,28 @@ def build_summary(
             "source_file",
             bootstrap_samples=bootstrap_samples,
             bootstrap_seed=bootstrap_seed + 300,
+            bootstrap_block_size=bootstrap_block_size,
         ),
         "by_source_group": grouped_aggregates(
             scored,
             "source_group",
             bootstrap_samples=bootstrap_samples,
             bootstrap_seed=bootstrap_seed + 400,
+            bootstrap_block_size=bootstrap_block_size,
         ),
         "by_model": grouped_aggregates(
             scored,
             "model_name",
             bootstrap_samples=bootstrap_samples,
             bootstrap_seed=bootstrap_seed + 500,
+            bootstrap_block_size=bootstrap_block_size,
             include_uncertainty=True,
         ),
         "paired_model_deltas": paired_model_delta_summaries(
             scored,
             samples=bootstrap_samples,
             seed=bootstrap_seed + 700,
+            block_size=bootstrap_block_size,
         ),
         "english_technical_term_examples": [
             {
@@ -1523,6 +1581,7 @@ def build_summary(
                     [row for row in scored if row.get("strategy") == strategy],
                     samples=bootstrap_samples,
                     seed=bootstrap_seed + 600 + offset,
+                    block_size=bootstrap_block_size,
                 ),
                 "short_utterance_subset": aggregate_metric_rows(
                     [
@@ -1747,10 +1806,30 @@ def attach_prompt_metadata(base_detail: dict[str, Any], prompt: str | None) -> N
     }
 
 
-def build_rolling_prompt(args: argparse.Namespace, previous_predictions: list[str]) -> str | None:
+def contextual_terms_prompt(args: argparse.Namespace, records: Iterable[dict[str, Any]]) -> str | None:
+    if not getattr(args, "include_context_technical_terms", False):
+        return None
+    terms = english_terms_from_text(*(str(record.get("context_before") or "") for record in records))
+    return f"Technical terms: {', '.join(terms)}" if terms else None
+
+
+def build_common_prompt(args: argparse.Namespace, records: Iterable[dict[str, Any]]) -> str | None:
     prompt_parts = []
     if args.initial_prompt:
         prompt_parts.append(args.initial_prompt.strip())
+    terms_prompt = contextual_terms_prompt(args, records)
+    if terms_prompt:
+        prompt_parts.append(terms_prompt)
+    return "\n".join(prompt_parts) if prompt_parts else None
+
+
+def build_rolling_prompt(
+    args: argparse.Namespace, previous_predictions: list[str], records: Iterable[dict[str, Any]] = ()
+) -> str | None:
+    prompt_parts = []
+    common_prompt = build_common_prompt(args, records)
+    if common_prompt:
+        prompt_parts.append(common_prompt)
     recent_predictions = [text for text in previous_predictions[-args.rolling_prompt_turns :] if text.strip()]
     if recent_predictions:
         rolling_text = " ".join(recent_predictions)[-args.rolling_prompt_chars :]
@@ -1771,11 +1850,14 @@ def evaluate_single_chunk_strategy(
     details: list[dict[str, Any]] = []
     previous_predictions: list[str] = []
     previous_group: str | None = None
+    previous_record: dict[str, Any] | None = None
     for index, record in enumerate(metadata, start=1):
         current_group = portable_source_id(str(record.get("source_file") or source_group_for_record(record)))
-        if current_group != previous_group:
+        gap = source_gap_seconds(previous_record, record) if previous_record is not None else None
+        if current_group != previous_group or (gap is not None and gap > args.context_max_gap_seconds):
             previous_predictions = []
-            previous_group = current_group
+        previous_group = current_group
+        previous_record = record
         audio_path = resolve_audio_path(args.dataset_dir, record)
         reference = str(record.get("text", ""))
         base_detail = base_detail_for_record(
@@ -1796,11 +1878,11 @@ def evaluate_single_chunk_strategy(
             continue
 
         try:
-            prompt = args.initial_prompt
+            prompt = build_common_prompt(args, [record])
             transcribe_path = audio_path
             include_after_seconds = None
             if strategy == "rolling_initial_prompt":
-                prompt = build_rolling_prompt(args, previous_predictions)
+                prompt = build_rolling_prompt(args, previous_predictions, [record])
                 base_detail["rolling_prompt"] = prompt
             elif strategy == "left_audio_context":
                 context_records: list[tuple[int, dict[str, Any], Path]] = []
@@ -1938,13 +2020,15 @@ def evaluate_merged_deferred_short(
                 ),
             ),
             "reference_non_thai_english_scripts": non_thai_english_scripts(reference),
-            "prompt": args.initial_prompt,
+            "prompt": build_common_prompt(args, group),
             "prompt_metadata": {
                 "initial_prompt_present": bool(args.initial_prompt),
                 "rolling_prompt_turns": args.rolling_prompt_turns,
                 "rolling_prompt_chars": args.rolling_prompt_chars,
-                "runtime_prompt_chars": len(args.initial_prompt or ""),
-                "runtime_prompt_hash": sha256_json(args.initial_prompt) if args.initial_prompt else None,
+                "runtime_prompt_chars": len(build_common_prompt(args, group) or ""),
+                "runtime_prompt_hash": (
+                    sha256_json(build_common_prompt(args, group)) if build_common_prompt(args, group) else None
+                ),
             },
         }
 
@@ -1958,7 +2042,9 @@ def evaluate_merged_deferred_short(
                     concatenate_wavs([path for path in audio_paths if path is not None], transcribe_path)
                 if transcribe_path is None:
                     raise ValueError("No audio path for merged group")
-                prediction, transcribe_info = transcribe_one(model, transcribe_path, args)
+                prediction, transcribe_info = transcribe_one(
+                    model, transcribe_path, args, initial_prompt=build_common_prompt(args, group)
+                )
                 detail = score_prediction(base_detail, prediction, transcribe_info)
             except Exception as exc:
                 detail = {**base_detail, "status": "transcribe_failed", "error": repr(exc)}
@@ -1974,6 +2060,33 @@ def evaluate_merged_deferred_short(
             print(f"[merged_deferred_short] Processed {processed}/{len(metadata)} rows ({ok_count} groups scored).")
         index += len(group)
     return details
+
+
+def output_completeness_error(
+    details: list[dict[str, Any]], models: list[str], strategies: list[str], metadata: list[dict[str, Any]]
+) -> str | None:
+    expected = {
+        (model, strategy, str(record.get("_sample_id")))
+        for model in models
+        for strategy in strategies
+        for record in metadata
+    }
+    actual_keys = [
+        (str(row.get("model_name")), str(row.get("strategy")), str(row.get("sample_id"))) for row in details
+    ]
+    counts = Counter(actual_keys)
+    actual = set(actual_keys)
+    missing = sorted(expected - actual)
+    unexpected = sorted(actual - expected)
+    duplicates = sorted(key for key, count in counts.items() if count != 1)
+    non_ok = [key for key, row in zip(actual_keys, details) if row.get("status") != "ok"]
+    if len(actual_keys) == len(expected) and not missing and not unexpected and not duplicates and not non_ok:
+        return None
+    return (
+        f"Incomplete benchmark output: expected exactly {len(expected)} model×strategy×sample rows, "
+        f"got {len(actual_keys)}; missing={missing[:5]}, unexpected={unexpected[:5]}, "
+        f"duplicate={duplicates[:5]}, non_ok={non_ok[:5]}."
+    )
 
 
 def main() -> int:
@@ -2069,7 +2182,7 @@ def main() -> int:
         )
         summary = build_summary(
             args=args,
-            status="skipped",
+            status="failed",
             run_id=run_id,
             details_path=details_path,
             summary_path=summary_path,
@@ -2083,7 +2196,7 @@ def main() -> int:
         write_json(summary_path, summary)
         print(message)
         print(f"Summary: {summary_path}")
-        return 0
+        return 1
 
     details: list[dict[str, Any]] = []
     with tempfile.TemporaryDirectory(prefix="daiya-asr-eval-") as temp_name:
@@ -2091,7 +2204,27 @@ def main() -> int:
         for model_name in models:
             model_info = model_identity(model_name)
             print(f"Loading faster-whisper model {model_name!r} on {args.device} ({args.compute_type})...")
-            model = WhisperModel(model_name, device=args.device, compute_type=args.compute_type)
+            try:
+                model = WhisperModel(model_name, device=args.device, compute_type=args.compute_type)
+            except Exception as exc:
+                for strategy in strategies:
+                    for index, record in enumerate(metadata, start=1):
+                        details.append(
+                            {
+                                **base_detail_for_record(
+                                    index=index,
+                                    record=record,
+                                    audio_path=resolve_audio_path(args.dataset_dir, record),
+                                    reference=str(record.get("text", "")),
+                                    strategy=strategy,
+                                    model_info=model_info,
+                                    run_metadata=run_metadata,
+                                ),
+                                "status": "model_load_failed",
+                                "error": repr(exc),
+                            }
+                        )
+                continue
             for strategy in strategies:
                 if strategy == "merged_deferred_short":
                     strategy_details = evaluate_merged_deferred_short(
@@ -2117,9 +2250,10 @@ def main() -> int:
             gc.collect()
 
     write_jsonl(details_path, details)
+    completeness_message = output_completeness_error(details, models, strategies, metadata)
     summary = build_summary(
         args=args,
-        status="ok",
+        status="failed" if completeness_message else "ok",
         run_id=run_id,
         details_path=details_path,
         summary_path=summary_path,
@@ -2127,6 +2261,7 @@ def main() -> int:
         details=details,
         started_at=started_at,
         elapsed_seconds=time.perf_counter() - started,
+        message=completeness_message,
         run_metadata=run_metadata,
     )
     write_json(summary_path, summary)
@@ -2140,7 +2275,7 @@ def main() -> int:
             micro_wer_like=summary["micro_wer_like"],
         )
     )
-    return 0
+    return 1 if completeness_message else 0
 
 
 if __name__ == "__main__":
