@@ -490,13 +490,17 @@ def score_candidate(candidate: Path, rows: list[dict[str, Any]], config: ProbeCo
             prompt_text = generation_prompt_text(row, previous_predictions, config)
             try:
                 audio = row["audio"]
-                features = processor.feature_extractor(
+                feature_batch = processor.feature_extractor(
                     audio["array"],
                     sampling_rate=audio["sampling_rate"],
                     return_tensors="pt",
-                ).input_features.to(device=input_device, dtype=model_input_dtype(model))
+                    return_attention_mask=True,
+                )
+                features = feature_batch.input_features.to(device=input_device, dtype=model_input_dtype(model))
+                attention_mask = feature_batch.attention_mask.to(device=input_device)
                 generated_ids = model.generate(
                     input_features=features,
+                    attention_mask=attention_mask,
                     max_length=config.generation_max_length,
                     task=config.task,
                     **language_kwargs(row, config),
