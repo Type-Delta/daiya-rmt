@@ -1,6 +1,6 @@
 # M3.1: generation-gated prompt-conditioned Whisper
 
-Status: experiment in progress. Primary benchmark results will replace the pending table below before review.
+Status: complete. Final Claude `opus`/`xhigh` QA found no blockers and judged the experiment/tooling PR-ready.
 
 ## Question and design
 
@@ -15,6 +15,7 @@ Important limitation: the historical M2 and M3 training recipes used a seeded ro
 - Implementation commit used for training: `a6429e58900811afb2b36652e14c3abb67187a74`.
 - Corrected probe implementation: `76b5335d3333d7cf01e5e472fca2ea9071e05a52`.
 - Base model: `openai/whisper-large-v3`.
+- Base-model revision: not captured (`null` in provenance); exact reconstruction depends on the upstream snapshot remaining available.
 - Dataset metadata SHA-256: `9d56736b055df552fa20b325fce0720b87d4bd29f0b166fd4d1197d87874a028`.
 - Split manifest SHA-256: `16d9655b0a57839b4562bb72e3114c949592a641b294b7586b490ffe07d80ad3`.
 - Generation selector SHA-256: `62837673770ca5c08883185ac5e6188b02a6b95e80be4d1337bf1d9a4099dd28` (128 rows).
@@ -45,11 +46,37 @@ The gate selected checkpoint 588, improving selector micro CER by 1.00 percentag
 
 An earlier diagnostic rolling probe omitted an explicit attention mask while Whisper's pad and EOS token IDs are equal. Its output is superseded and excluded. The corrected probe explicitly supplies the feature-extractor attention mask.
 
+The isolated probe independently selected checkpoint 588 at 27.19% micro CER, 28.48% micro WER-like, and 40.50% short-utterance micro CER. Agreement between isolated and rolling selector contexts makes the selection reproducible on this validation set, but does not guarantee transfer to the quantized deployment backend.
+
 ## Primary apples-to-apples benchmark
 
-Pending completion of CT2 conversion and the single-harness rerun. The final table will contain M2, M3, generation-selected M3.1 checkpoint 588, and eval-loss-selected M3.1 checkpoint 500 under both isolated and rolling-initial-prompt decoding. Both strategies use the same causal row-term prompt derived only from `context_before`; rolling additionally carries up to three recent hypotheses and resets when a selected-row source-time gap exceeds 1.5 seconds. Results include micro CER/WER-like, contiguous-block bootstrap intervals, short-utterance and language/mixed-language breakdowns, latency/RTF, and endpoint memory snapshots. With only one benchmark conversation, intervals are descriptive chunk-level uncertainty and do not estimate between-conversation variance.
+The primary run completed 1,024/1,024 model-strategy-sample decodes with no failures in 2,119 seconds (35 m 19 s). All four CT2 `int8_float16` models used the same 128 frozen samples, beam size 5, fixed Thai hint, disabled previous-text conditioning, normalization/metric code, causal row-term prompt, and block-bootstrap seed. Rolling additionally carries up to three recent hypotheses and resets when a selected-row source-time gap exceeds 1.5 seconds.
 
-The selector uses Transformers/PEFT with metadata language policy, while the deployment benchmark uses quantized CT2/faster-whisper with a fixed Thai hint. Selector-backend gains and deployment-backend gains are reported separately; transfer between them is not assumed.
+| Model / selection | Strategy | Micro CER (block 95% interval) | Micro WER-like | Short CER | Mean latency | Mean RTF | Max endpoint RAM |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| M2 | isolated | 29.02% (21.18–38.00) | 31.27% | 40.61% | 2.07 s | 0.591 | 1,100 MiB |
+| M2 | rolling | 26.63% (20.90–32.47) | 27.52% | 40.38% | 2.14 s | 0.582 | 1,102 MiB |
+| M3 checkpoint 800 | isolated | **24.32%** (20.30–27.22) | **24.96%** | **40.78%** | **1.74 s** | **0.426** | 1,106 MiB |
+| M3 checkpoint 800 | rolling | **24.31%** (20.04–27.23) | **24.66%** | **41.40%** | **1.85 s** | **0.456** | 1,106 MiB |
+| M3.1 checkpoint 500 (eval loss) | isolated | 25.03% (20.81–28.24) | 26.06% | 42.26% | 1.93 s | 0.510 | 1,110 MiB |
+| M3.1 checkpoint 500 (eval loss) | rolling | 24.85% (20.85–27.77) | 26.04% | 42.38% | 1.86 s | 0.480 | 1,110 MiB |
+| M3.1 checkpoint 588 (generation gate) | isolated | 26.51% (21.27–31.32) | 27.82% | 41.35% | 2.06 s | 0.535 | 1,107 MiB |
+| M3.1 checkpoint 588 (generation gate) | rolling | 25.99% (20.96–30.03) | 26.96% | 41.69% | 2.03 s | 0.543 | 1,107 MiB |
+
+Checkpoint 588 does not reproduce its selector advantage after CT2 conversion. Relative to checkpoint 500, generation-selected checkpoint 588 is worse by 1.48 pp CER isolated and 1.14 pp rolling; both moving-block intervals include zero. M3.1 checkpoint 588 is also worse than M3 by 2.19 pp CER isolated (95% delta interval 0.17–5.38 pp) and 1.68 pp rolling (−0.19–4.59 pp). M3 remains the best point estimate for both strategies, WER-like, latency, and RTF. Checkpoint 500 is the better M3.1 deployment artifact, but still trails M3.
+
+The benchmark labels are overwhelmingly Thai: each model-strategy cell has 124 Thai, 2 English, and 2 Thai-English samples. Rolling-context bucket results are shown below; the two-sample English and mixed cells are descriptive only and cannot support language-specific claims.
+
+| Model | Thai CER (n=124) | English CER (n=2) | Thai-English CER (n=2) |
+| --- | ---: | ---: | ---: |
+| M2 | 25.77% | 52.50% | 92.50% |
+| M3 | **23.49%** | **45.00%** | **88.75%** |
+| M3.1 checkpoint 500 | 23.93% | 65.00% | **88.75%** |
+| M3.1 checkpoint 588 | 25.14% | 47.50% | 92.50% |
+
+GPU process memory was unavailable from `nvidia-smi` under this Windows runtime. RAM values are maxima of before/after endpoint snapshots, not transient inference peaks. With only one benchmark conversation, moving-block intervals describe within-conversation chunk variation and do not estimate between-conversation variance.
+
+The selector uses Transformers/PEFT with metadata language policy, while the deployment benchmark uses quantized CT2/faster-whisper with a fixed Thai hint. The reversal between selector and deployment rankings demonstrates that selector-backend gains did not transfer here; checkpoint selection must be validated on the delivery backend before promotion.
 
 ## Historical context
 
@@ -65,8 +92,8 @@ The authoritative source is the body of GitHub PR #9, “feat(whisper): Add prom
 
 ## Recommendation
 
-Pending the primary benchmark and QA. Regardless of its point estimates, source-11 contamination in the legacy controls prevents an unconditional default-model promotion from this experiment alone.
+Do not promote M3.1 checkpoint 588 or replace M3. The generation gate selected a checkpoint that regressed on the delivery backend, and the legacy controls are contaminated in M3.1's benchmark conversation. Merge the reproducibility, leakage-control, strict-gating, and benchmark infrastructure as experimental tooling, but retain M3 checkpoint 800 as the current model. A future promotion experiment should use at least two untouched conversations, matched M3/M3.1 training on the same grouped split, multiple seeds, and delivery-backend generation metrics for selection.
 
 ## Artifact locations
 
-Machine-readable selector and benchmark outputs will be committed under `docs/experiments/m31/raw/`. Large adapters, merged models, and CT2 models remain outside Git under the main worktree's `training/whisper/runs/m3.1/` directory.
+Machine-readable training, selector, conversion, and 1,024-row benchmark outputs are committed under `docs/experiments/m31/raw/` with SHA-256 checksums. Large adapters, merged models, and CT2 models remain outside Git under the main worktree's `training/whisper/runs/m3.1/` directory.

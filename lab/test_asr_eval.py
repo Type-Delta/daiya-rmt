@@ -184,6 +184,13 @@ def test_summary_includes_breakdowns_and_short_utterances(tmp_path: Path) -> Non
         ),
     ]
 
+    run_metadata = dict(rows[0]["run"])
+    run_metadata["decode_config"] = {
+        "language": "th",
+        "include_context_technical_terms": True,
+        "condition_on_previous_text": False,
+        "rolling_prompt_chars": 512,
+    }
     summary = asr_eval.build_summary(
         args=make_args(tmp_path),
         status="ok",
@@ -194,7 +201,7 @@ def test_summary_includes_breakdowns_and_short_utterances(tmp_path: Path) -> Non
         details=rows,
         started_at="2026-07-10T00:00:00+00:00",
         elapsed_seconds=1.0,
-        run_metadata=rows[0]["run"],
+        run_metadata=run_metadata,
     )
 
     assert summary["short_utterance_subset"]["count"] == 2
@@ -203,6 +210,10 @@ def test_summary_includes_breakdowns_and_short_utterances(tmp_path: Path) -> Non
     assert set(summary["by_model"]) == {"m2", "m3"}
     assert summary["overall"]["peak_gpu_bytes"] == 2000
     assert "m2__minus__m3" in summary["paired_model_deltas"]["isolated"]
+    assert summary["language"] == "th"
+    assert summary["include_context_technical_terms"] is True
+    assert summary["condition_on_previous_text"] is False
+    assert summary["rolling_prompt_chars"] == 512
 
 
 def test_bootstrap_confidence_intervals_are_deterministic() -> None:

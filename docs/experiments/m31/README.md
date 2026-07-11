@@ -1,6 +1,6 @@
 # M3.1: generation-gated prompt-conditioned Whisper
 
-Status: full training and corrected rolling checkpoint selection are complete; isolated selection and the primary benchmark are pending.
+Status: complete. Final Claude `opus`/`xhigh` QA found no blockers and judged the experiment/tooling PR-ready.
 
 ## Objective
 
@@ -70,4 +70,6 @@ Legacy M2 and M3 used a seeded row-random 5% validation split over the complete 
 - A method-level prompt-training claim would require matched control training on this split and preferably multiple seeds.
 - No Japanese-English claim is supported by this corpus.
 
-The final report will state this limitation and make a conservative merge recommendation.
+## Outcome
+
+Both selector contexts chose checkpoint 588, but the CT2 deployment benchmark reversed that ranking: eval-loss checkpoint 500 beat checkpoint 588 by 1.48 pp CER isolated and 1.14 pp rolling. M3 checkpoint 800 remained best overall (24.32% isolated, 24.31% rolling), while M3.1 checkpoint 588 scored 26.51% and 25.99%. Do not promote M3.1; retain M3. The implementation and reproducibility infrastructure are suitable to merge as experimental tooling, subject to final QA.

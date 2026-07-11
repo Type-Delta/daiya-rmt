@@ -1720,6 +1720,11 @@ def build_summary(
         sample_fingerprint = run_metadata.get("sample_set_hash")
         decode_config_hash = run_metadata.get("decode_config_hash")
         primary_run = bool(run_metadata.get("primary_run"))
+    authoritative_decode = run_metadata.get("decode_config", {}) if run_metadata else {}
+
+    def decode_value(key: str, fallback: Any) -> Any:
+        value = authoritative_decode.get(key)
+        return fallback if value is None else value
 
     summary: dict[str, Any] = {
         "status": status,
@@ -1731,18 +1736,28 @@ def build_summary(
         "models": model_names or getattr(args, "models_list", []),
         "device": args.device,
         "compute_type": args.compute_type,
-        "language": args.language,
-        "initial_prompt": args.initial_prompt,
-        "include_context_technical_terms": getattr(
-            args, "include_context_technical_terms", False
+        "language": decode_value("language", args.language),
+        "initial_prompt": decode_value("initial_prompt", args.initial_prompt),
+        "include_context_technical_terms": decode_value(
+            "include_context_technical_terms",
+            getattr(args, "include_context_technical_terms", False),
         ),
-        "beam_size": args.beam_size,
-        "condition_on_previous_text": not args.no_condition_on_previous_text,
+        "beam_size": decode_value("beam_size", args.beam_size),
+        "condition_on_previous_text": decode_value(
+            "condition_on_previous_text",
+            not args.no_condition_on_previous_text,
+        ),
         "strategy": args.strategy,
         "benchmark_strategies": strategies,
-        "short_utterance_seconds": args.short_utterance_seconds,
-        "rolling_prompt_turns": args.rolling_prompt_turns,
-        "rolling_prompt_chars": args.rolling_prompt_chars,
+        "short_utterance_seconds": decode_value(
+            "short_utterance_seconds", args.short_utterance_seconds
+        ),
+        "rolling_prompt_turns": decode_value(
+            "rolling_prompt_turns", args.rolling_prompt_turns
+        ),
+        "rolling_prompt_chars": decode_value(
+            "rolling_prompt_chars", args.rolling_prompt_chars
+        ),
         "left_audio_context_seconds": args.left_audio_context_seconds,
         "context_max_gap_seconds": args.context_max_gap_seconds,
         "merge_max_seconds": args.merge_max_seconds,
