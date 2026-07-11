@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$StatusDir,
-    [int]$PollSeconds = 30
+    [int]$PollSeconds = 30,
+    [int]$StallMinutes = 90
 )
 
 $ErrorActionPreference = "Stop"
@@ -30,6 +31,28 @@ while ($true) {
                 latest_stderr = if (Test-Path $stderrPath) { @(Get-Content $stderrPath -Tail 30) } else { @() }
             } | ConvertTo-Json -Depth 5
             exit 2
+        }
+        # PowerShell may buffer native-process redirection until process exit. A zero-byte
+        # log is therefore not a reliable activity clock and must never trigger a stall.
+        $activityPaths = @($stdoutPath, $stderrPath) | Where-Object {
+            (Test-Path -LiteralPath $_) -and (Get-Item -LiteralPath $_).Length -gt 0
+        }
+        if ($StallMinutes -gt 0 -and $activityPaths.Count -gt 0) {
+            $latestWrite = $activityPaths |
+                ForEach-Object { (Get-Item -LiteralPath $_).LastWriteTimeUtc } |
+                Sort-Object -Descending |
+                Select-Object -First 1
+            if (((Get-Date).ToUniversalTime() - $latestWrite).TotalMinutes -ge $StallMinutes) {
+                [ordered]@{
+                    status = "action_required_stalled_output"
+                    launcher_pid = $launchState.launcher_pid
+                    stall_minutes = $StallMinutes
+                    latest_activity_at = $latestWrite.ToString("o")
+                    latest_stdout = if (Test-Path $stdoutPath) { @(Get-Content $stdoutPath -Tail 30) } else { @() }
+                    latest_stderr = if (Test-Path $stderrPath) { @(Get-Content $stderrPath -Tail 30) } else { @() }
+                } | ConvertTo-Json -Depth 5
+                exit 3
+            }
         }
     }
     Start-Sleep -Seconds $PollSeconds
