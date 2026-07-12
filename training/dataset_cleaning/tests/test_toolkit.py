@@ -15,6 +15,7 @@ from daiya_dataset_cleaning.models import Confidence, Disposition, ManifestRecor
 from daiya_dataset_cleaning.normalize import content_identity, normalize_text, source_identity
 from daiya_dataset_cleaning.signals import evaluate_signals, script_profile
 from daiya_dataset_cleaning.spelling import (
+    PyThaiNLPChecker,
     SpanCheckResult,
     SpellingIssue,
     route_script_spans,
@@ -93,6 +94,28 @@ class ToolkitTests(unittest.TestCase):
         self.assertEqual(summary["by_language"]["thai"]["suspicious_ratio"], 1.0)
         self.assertEqual(summary["by_language"]["english"]["suspicious_ratio"], 0.0)
         self.assertEqual(route_script_spans("人々")[0].text, "人々")
+
+    def test_thai_checker_caches_repeated_token_lookups(self) -> None:
+        checker = PyThaiNLPChecker.__new__(PyThaiNLPChecker)
+        checker.engine = "fixture"
+        checker.name = "fixture-thai"
+        checker._token_cache = {}
+        calls: list[str] = []
+
+        def correct(token: str, *, engine: str) -> str:
+            calls.append(f"correct:{engine}:{token}")
+            return "แก้"
+
+        def spell(token: str, *, engine: str) -> list[str]:
+            calls.append(f"spell:{engine}:{token}")
+            return ["แก้"]
+
+        checker._correct = correct
+        checker._spell = spell
+        first = checker._check_token("ผิด")
+        second = checker._check_token("ผิด")
+        self.assertIs(first, second)
+        self.assertEqual(calls, ["correct:fixture:ผิด", "spell:fixture:ผิด"])
 
     def test_correction_requires_grounded_provenance(self) -> None:
         with self.assertRaises(ValueError):

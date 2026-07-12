@@ -101,12 +101,21 @@ class ExperimentScriptTests(unittest.TestCase):
                 encoding="utf-8",
             )
             spelling_output = root / "spelling-manifest.jsonl"
+            spelling_predictions = root / "spelling-predictions.jsonl"
+            spelling_predictions.write_text(
+                json.dumps({"file_name": "train/other.wav", "prediction": "replacement", "model_name": "m1"})
+                + "\n"
+                + json.dumps({"file_name": "train/other.wav", "prediction": "replacement", "model_name": "m2"})
+                + "\n",
+                encoding="utf-8",
+            )
             build_manifest(
                 metadata,
                 audio,
                 spelling_output,
                 dataset_version="fixture-v1",
                 protected_gold_dir=gold,
+                predictions_path=spelling_predictions,
                 spelling_results_path=spelling,
             )
             spelling_records = [json.loads(line) for line in spelling_output.read_text(encoding="utf-8").splitlines()]

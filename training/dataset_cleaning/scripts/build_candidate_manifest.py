@@ -254,6 +254,8 @@ def build_manifest(
             extra_evidence.append(Evidence("audio_present", True, source="manifest-builder"))
         if content_sha is None or duplicate_counts.get(content_sha, 0) > 1:
             proposal = None
+        if ReasonCode.SPELLING_SUSPECT in extra_reasons:
+            proposal = None
         if proposal is None:
             extra_reasons = [reason for reason in extra_reasons if reason is not ReasonCode.GROUNDED_CORRECTION]
         disposition = disposition_for_reasons(

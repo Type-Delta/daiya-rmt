@@ -40,6 +40,25 @@ not accepted labels. The full manifest was written outside the repository to a
 temporary path; the schema is represented by
 [candidate-manifest-v1.sample.jsonl](candidate-manifest-v1.sample.jsonl).
 
+## Spelling audit rerun
+
+A 2026-07-12 rerun added PyThaiNLP `pn` for Thai spans and SymSpell 6.10.0 with
+its packaged English frequency dictionary. No allowlist was derived from gold or
+test labels, raw suspicious units remained hashed, and Japanese checking was
+skipped because the canonical labels contain no Japanese script. At the
+provisional per-language ratio threshold 0.20 with at least one issue, 2,281 of
+7,091 rows (32.2%) were spelling-suspect. The candidate manifest became 4,475
+keep, 2,453 review, 92 drop, and 71 uncalibrated correct proposals; relative to
+the baseline, 2,175 keep rows moved to review.
+
+This is not evidence that all flagged rows are mislabeled. At least one dictionary
+issue occurred in 5,034 rows (71.0%), consistent with substantial segmentation,
+technical-term, name, transliteration, and dictionary-coverage false positives.
+Use the signal for stratified review and threshold calibration, not automatic
+deletion or correction. Aggregate results and artifact hashes are in
+[spelling-audit-v2.json](spelling-audit-v2.json); full row-level outputs remain
+outside Git in the temporary artifact directory.
+
 ## Gold comparison
 
 The evaluator scored the original label and available model hypotheses only on

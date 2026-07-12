@@ -195,6 +195,20 @@ class PyThaiNLPChecker:
         self._correct = correct
         self._spell = spell
         self._tokenize = word_tokenize
+        self._token_cache: dict[str, SpellingIssue | None] = {}
+
+    def _check_token(self, token: str) -> SpellingIssue | None:
+        cached = self._token_cache.get(token)
+        if token in self._token_cache:
+            return cached
+        corrected = str(self._correct(token, engine=self.engine))
+        if normalize_text(corrected) == normalize_text(token):
+            issue = None
+        else:
+            suggestions = tuple(str(item) for item in self._spell(token, engine=self.engine)[:5])
+            issue = SpellingIssue("thai", self.name, token, suggestions or (corrected,))
+        self._token_cache[token] = issue
+        return issue
 
     def check(self, text: str) -> SpanCheckResult:
         tokens = [
@@ -202,13 +216,7 @@ class PyThaiNLPChecker:
             for token in self._tokenize(text, engine="newmm", keep_whitespace=False)
             if len(token) >= 2 and token.strip() and any(_script_name(char) == "thai" for char in token)
         ]
-        issues: list[SpellingIssue] = []
-        for token in tokens:
-            corrected = str(self._correct(token, engine=self.engine))
-            if normalize_text(corrected) == normalize_text(token):
-                continue
-            suggestions = tuple(str(item) for item in self._spell(token, engine=self.engine)[:5])
-            issues.append(SpellingIssue("thai", self.name, token, suggestions or (corrected,)))
+        issues = [issue for token in tokens if (issue := self._check_token(token)) is not None]
         return SpanCheckResult(len(tokens), tuple(issues))
 
 
@@ -259,6 +267,7 @@ class SymSpellEnglishChecker:
         self._checker = SymSpell(max_dictionary_edit_distance=max_edit_distance, prefix_length=7)
         if not self._checker.load_dictionary(dictionary_path, term_index=0, count_index=1):
             raise ValueError(f"could not load SymSpell dictionary: {dictionary_path}")
+        self._token_cache: dict[str, tuple[str, ...]] = {}
 
     def check(self, text: str) -> SpanCheckResult:
         tokens = [
@@ -268,13 +277,17 @@ class SymSpellEnglishChecker:
         ]
         issues: list[SpellingIssue] = []
         for token in tokens:
-            suggestions = self._checker.lookup(
-                token.casefold(),
-                self._verbosity.CLOSEST,
-                max_edit_distance=self._max_edit_distance,
-                include_unknown=False,
-            )
-            terms = tuple(str(item.term) for item in suggestions[:5])
+            normalized_token = token.casefold()
+            terms = self._token_cache.get(normalized_token)
+            if terms is None:
+                suggestions = self._checker.lookup(
+                    normalized_token,
+                    self._verbosity.CLOSEST,
+                    max_edit_distance=self._max_edit_distance,
+                    include_unknown=False,
+                )
+                terms = tuple(str(item.term) for item in suggestions[:5])
+                self._token_cache[normalized_token] = terms
             if terms and terms[0].casefold() == token.casefold():
                 continue
             issues.append(SpellingIssue("english", self.name, token, terms))
