@@ -1,0 +1,95 @@
+{
+  "schema_version": "cleaning-eval-1",
+  "gold_count": 109,
+  "exact_audio_overlap_count": 82,
+  "unmatched_gold_count": 27,
+  "malformed_gold_count": 0,
+  "malformed_metadata_count": 0,
+  "overlap_is_contaminated": true,
+  "source_group_count_in_mapped_overlap": 1,
+  "source_group_split_status": "blocked_single_group",
+  "candidate_metrics": {
+    "checkpoint-500-ct2-int8_float16|isolated": {
+      "count": 8,
+      "coverage": 0.07339449541284404,
+      "mean_cer": 0.16103411332644735,
+      "micro_cer": 0.2116991643454039,
+      "mean_cer_no_space": 0.1650160974244121,
+      "micro_cer_no_space": 0.22023809523809523,
+      "mean_wer_like": 0.43229166666666663
+    },
+    "checkpoint-500-ct2-int8_float16|rolling_initial_prompt": {
+      "count": 8,
+      "coverage": 0.07339449541284404,
+      "mean_cer": 0.16103411332644735,
+      "micro_cer": 0.2116991643454039,
+      "mean_cer_no_space": 0.1650160974244121,
+      "micro_cer_no_space": 0.22023809523809523,
+      "mean_wer_like": 0.43229166666666663
+    },
+    "checkpoint-588-ct2-int8_float16|isolated": {
+      "count": 8,
+      "coverage": 0.07339449541284404,
+      "mean_cer": 0.16845985590070475,
+      "micro_cer": 0.22841225626740946,
+      "mean_cer_no_space": 0.17432460806270997,
+      "micro_cer_no_space": 0.24107142857142858,
+      "mean_wer_like": 0.43229166666666663
+    },
+    "checkpoint-588-ct2-int8_float16|rolling_initial_prompt": {
+      "count": 8,
+      "coverage": 0.07339449541284404,
+      "mean_cer": 0.16845985590070475,
+      "micro_cer": 0.22841225626740946,
+      "mean_cer_no_space": 0.17432460806270997,
+      "micro_cer_no_space": 0.24107142857142858,
+      "mean_wer_like": 0.43229166666666663
+    },
+    "largev3-m2-iter1-ct2-int8_float16|isolated": {
+      "count": 8,
+      "coverage": 0.07339449541284404,
+      "mean_cer": 0.18831664230398276,
+      "micro_cer": 0.24233983286908078,
+      "mean_cer_no_space": 0.1951036959960532,
+      "micro_cer_no_space": 0.25595238095238093,
+      "mean_wer_like": 0.49479166666666663
+    },
+    "largev3-m2-iter1-ct2-int8_float16|rolling_initial_prompt": {
+      "count": 8,
+      "coverage": 0.07339449541284404,
+      "mean_cer": 0.18831664230398276,
+      "micro_cer": 0.24233983286908078,
+      "mean_cer_no_space": 0.1951036959960532,
+      "micro_cer_no_space": 0.25595238095238093,
+      "mean_wer_like": 0.49479166666666663
+    },
+    "largev3-m3-iter1-prompt-terms-checkpoint-800-ct2-int8_float16|isolated": {
+      "count": 8,
+      "coverage": 0.07339449541284404,
+      "mean_cer": 0.16845985590070475,
+      "micro_cer": 0.22841225626740946,
+      "mean_cer_no_space": 0.17432460806270997,
+      "micro_cer_no_space": 0.24107142857142858,
+      "mean_wer_like": 0.43229166666666663
+    },
+    "largev3-m3-iter1-prompt-terms-checkpoint-800-ct2-int8_float16|rolling_initial_prompt": {
+      "count": 8,
+      "coverage": 0.07339449541284404,
+      "mean_cer": 0.16845985590070475,
+      "micro_cer": 0.22841225626740946,
+      "mean_cer_no_space": 0.17432460806270997,
+      "micro_cer_no_space": 0.24107142857142858,
+      "mean_wer_like": 0.43229166666666663
+    },
+    "original_label": {
+      "count": 82,
+      "coverage": 0.7522935779816514,
+      "mean_cer": 0.06028401856409507,
+      "micro_cer": 0.05731414868105516,
+      "mean_cer_no_space": 0.05731043794070743,
+      "micro_cer_no_space": 0.0535,
+      "mean_wer_like": 0.30833195379465106
+    }
+  },
+  "interpretation": "Exact-overlap metrics are diagnostic only; no uncontaminated original-label comparison is available from this mapping."
+}
