@@ -14,6 +14,27 @@ from daiya_dataset_cleaning.io import write_csv, write_jsonl
 from daiya_dataset_cleaning.models import Confidence, Disposition, ManifestRecord, ProposedLabel, ReasonCode, SourceIdentity
 from daiya_dataset_cleaning.normalize import content_identity, normalize_text, source_identity
 from daiya_dataset_cleaning.signals import evaluate_signals, script_profile
+from daiya_dataset_cleaning.spelling import (
+    SpanCheckResult,
+    SpellingIssue,
+    route_script_spans,
+    validate_spelling,
+)
+
+
+class _FakeChecker:
+    def __init__(self, language: str, suspicious: str) -> None:
+        self.language = language
+        self.name = f"fake-{language}"
+        self.suspicious = suspicious
+
+    def check(self, text: str) -> SpanCheckResult:
+        issue = (
+            SpellingIssue(self.language, self.name, self.suspicious, ("suggestion",))
+            if self.suspicious in text
+            else None
+        )
+        return SpanCheckResult(1, (issue,) if issue else ())
 
 
 class ToolkitTests(unittest.TestCase):
@@ -55,6 +76,23 @@ class ToolkitTests(unittest.TestCase):
         record = decide(self.source, "valid transcript", 2.0, confidence=Confidence(0.2, "asr logprob", calibrated=False))
         self.assertEqual(record.disposition, Disposition.REVIEW)
         self.assertIn(ReasonCode.LOW_CONFIDENCE, record.reasons)
+
+    def test_spelling_routes_mixed_scripts_and_honors_allowlist(self) -> None:
+        spans = route_script_spans("ไทยผิด broken 日本語")
+        self.assertEqual([span.language for span in spans], ["thai", "english", "japanese"])
+        result = validate_spelling(
+            "ไทยผิด broken 日本語",
+            [_FakeChecker("thai", "ไทยผิด"), _FakeChecker("english", "broken")],
+            allowlist=frozenset({"broken"}),
+        )
+        self.assertEqual(result.checked_units, 2)
+        self.assertEqual(result.suspicious_units, 1)
+        self.assertEqual(result.issues[0].unit, "ไทยผิด")
+        summary = result.to_dict()
+        self.assertNotIn("unit", summary["issues"][0])
+        self.assertEqual(summary["by_language"]["thai"]["suspicious_ratio"], 1.0)
+        self.assertEqual(summary["by_language"]["english"]["suspicious_ratio"], 0.0)
+        self.assertEqual(route_script_spans("人々")[0].text, "人々")
 
     def test_correction_requires_grounded_provenance(self) -> None:
         with self.assertRaises(ValueError):

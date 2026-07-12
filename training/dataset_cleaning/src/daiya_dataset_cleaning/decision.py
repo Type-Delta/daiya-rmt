@@ -17,7 +17,7 @@ class DecisionPolicy:
         ReasonCode.CHAR_RATE_LOW, ReasonCode.CHAR_RATE_HIGH, ReasonCode.SCRIPT_MISMATCH,
         ReasonCode.DUPLICATE_CONTENT, ReasonCode.LOW_CONFIDENCE, ReasonCode.SIGNAL_CONFLICT,
         ReasonCode.PROTECTED_GOLD_OVERLAP, ReasonCode.PREDICTION_DISAGREEMENT,
-        ReasonCode.MALFORMED_INPUT,
+        ReasonCode.SPELLING_SUSPECT, ReasonCode.MALFORMED_INPUT,
     })
     min_adapter_confidence: float = 0.5
 

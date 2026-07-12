@@ -29,6 +29,7 @@ class ReasonCode(StrEnum):
     GROUNDED_CORRECTION = "grounded_correction"
     PROTECTED_GOLD_OVERLAP = "protected_gold_overlap"
     PREDICTION_DISAGREEMENT = "prediction_disagreement"
+    SPELLING_SUSPECT = "spelling_suspect"
     MALFORMED_INPUT = "malformed_input"
 
 
