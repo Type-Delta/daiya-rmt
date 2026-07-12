@@ -46,6 +46,7 @@ class ProvenanceRecord:
             raise ProvenanceValidationError(
                 "split_manifest_sha256 must be a SHA-256 hex digest"
             ) from exc
+        object.__setattr__(self, "split_manifest_sha256", digest.lower())
         for field_name in ("conversion_settings", "evaluation_backend", "metadata"):
             value = getattr(self, field_name)
             if not isinstance(value, Mapping):

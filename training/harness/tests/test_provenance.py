@@ -52,3 +52,10 @@ def test_provenance_rejects_unknown_fields(provenance):
     value["host_path"] = "C:/machine-specific"
     with pytest.raises(ProvenanceValidationError, match="unknown provenance fields"):
         ProvenanceRecord.from_dict(value)
+
+
+def test_provenance_normalizes_uppercase_manifest_digest(provenance):
+    normalized = ProvenanceRecord.from_dict(
+        {**provenance.to_dict(), "split_manifest_sha256": provenance.split_manifest_sha256.upper()}
+    )
+    assert normalized == provenance
