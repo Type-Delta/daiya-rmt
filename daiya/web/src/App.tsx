@@ -290,6 +290,11 @@ function useSession(pushLog: (level: string, text: string) => void) {
         if (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN) ws.close();
       };
 
+      // Heartbeat: idle streams get dropped by proxy/server keepalive timeouts (~1 min).
+      const heartbeat = window.setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping' }));
+      }, 20_000);
+
       ws.onopen = async () => {
         ws.send(JSON.stringify({ type: 'config', settings }));
         ws.send(JSON.stringify({ type: 'source', source }));
@@ -312,6 +317,7 @@ function useSession(pushLog: (level: string, text: string) => void) {
         if (!closingRef.current) fail('Stream connection failed — is the Daiya server running?');
       };
       ws.onclose = () => {
+        window.clearInterval(heartbeat);
         if (closingRef.current) return;
         micRef.current?.stop();
         micRef.current = null;

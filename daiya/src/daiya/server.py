@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -61,9 +63,23 @@ class LogBroadcaster(logging.Handler):
 log_broadcaster = LogBroadcaster()
 
 
+async def _loop_lag_watchdog() -> None:
+    # debug: if uvicorn's ws keepalive dies, this shows whether the event loop stalled.
+    while True:
+        t0 = time.monotonic()
+        await asyncio.sleep(1)
+        lag = time.monotonic() - t0 - 1
+        if lag > 0.5:
+            LOGGER.warning("event loop stalled for %.2fs", lag)
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Daiya v0 Prototype")
     _install_logging()
+
+    @app.on_event("startup")
+    async def start_watchdog() -> None:
+        asyncio.create_task(_loop_lag_watchdog())
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -84,13 +100,53 @@ def create_app() -> FastAPI:
     @app.websocket("/ws/stream")
     async def stream(websocket: WebSocket) -> None:
         await websocket.accept()
-        pipeline = StreamingPipeline(_config_from_query(websocket.query_params))
+        pipeline: StreamingPipeline | None = None
         next_index = 0
         next_start = 0.0
         LOGGER.info("stream connected")
+
+        # Drain the socket in its own task: if slow pipeline turns block reads, the
+        # TCP window fills and the client's keepalive pong can't get through — uvicorn
+        # then kills the connection (CLOSE 1011 keepalive ping timeout).
+        # ponytail: unbounded queue — audio backlog is bounded by session length;
+        # coalesce/drop frames if the backlog warning below fires in practice.
+        inbox: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+
+        async def drain_socket() -> None:
+            try:
+                while True:
+                    message = await websocket.receive()
+                    if message["type"] == "websocket.disconnect":
+                        LOGGER.info(
+                            "stream received disconnect: code=%s reason=%r",
+                            message.get("code"),
+                            message.get("reason"),
+                        )
+                        break
+                    inbox.put_nowait(message)
+            finally:
+                inbox.put_nowait(None)
+
+        reader = asyncio.create_task(drain_socket())
         try:
+            # Model load can take tens of seconds on first request — keep it off
+            # the event loop so keepalive pings still flow and the socket stays alive.
+            await websocket.send_json({"type": "log", "level": "info", "source": "stream", "message": "loading models..."})
+            try:
+                pipeline = await asyncio.to_thread(StreamingPipeline, _config_from_query(websocket.query_params))
+            except Exception as exc:
+                LOGGER.exception("pipeline init failed")
+                await websocket.send_json({"type": "error", "source": "stream", "message": f"pipeline init failed: {exc}"})
+                await websocket.close()
+                return
+            await websocket.send_json({"type": "log", "level": "info", "source": "stream", "message": "models ready"})
             while True:
-                message = await websocket.receive()
+                message = await inbox.get()
+                if message is None:
+                    break
+                backlog = inbox.qsize()
+                if backlog and backlog % 100 == 0:
+                    LOGGER.warning("pipeline running behind realtime: %d frames queued", backlog)
                 if message.get("bytes") is not None:
                     try:
                         chunk = chunk_from_pcm_bytes(
@@ -104,7 +160,12 @@ def create_app() -> FastAPI:
                         continue
                     next_index += 1
                     next_start = chunk.end_time
-                    for payload in await asyncio.to_thread(pipeline.accept_chunk, chunk):
+                    t0 = time.monotonic()
+                    payloads = await asyncio.to_thread(pipeline.accept_chunk, chunk)
+                    elapsed = time.monotonic() - t0
+                    if elapsed > 1.0:
+                        LOGGER.warning("accept_chunk #%d took %.2fs", next_index - 1, elapsed)
+                    for payload in payloads:
                         await websocket.send_json(payload)
                     continue
 
@@ -114,10 +175,13 @@ def create_app() -> FastAPI:
                 for payload in await _handle_text_message(text, pipeline):
                     await websocket.send_json(payload)
         except WebSocketDisconnect:
-            LOGGER.info("stream disconnected")
+            pass
         finally:
-            for payload in await asyncio.to_thread(pipeline.flush):
-                LOGGER.debug("flush event after disconnect: %s", payload)
+            reader.cancel()
+            LOGGER.info("stream disconnected")
+            if pipeline is not None:
+                for payload in await asyncio.to_thread(pipeline.flush):
+                    LOGGER.debug("flush event after disconnect: %s", payload)
 
     @app.post("/api/replay")
     async def replay(request: Request) -> StreamingResponse:
@@ -171,6 +235,7 @@ async def _handle_text_message(text: str, pipeline: StreamingPipeline) -> list[d
 
     message_type = message.get("type")
     if message_type == "ping":
+        LOGGER.debug("heartbeat ping received")
         return [{"type": "pong"}]
     if message_type == "flush":
         return await asyncio.to_thread(pipeline.flush)
@@ -308,7 +373,7 @@ def _install_logging() -> None:
     root = logging.getLogger()
     if log_broadcaster not in root.handlers:
         root.addHandler(log_broadcaster)
-    LOGGER.setLevel(logging.INFO)
+    LOGGER.setLevel(logging.DEBUG if os.environ.get("DAIYA_DEBUG") else logging.INFO)
 
 
 def _mount_web_build(app: FastAPI) -> None:

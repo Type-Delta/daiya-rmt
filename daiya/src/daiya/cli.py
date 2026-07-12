@@ -4,11 +4,14 @@ import argparse
 import asyncio
 import errno
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 from .audio import FileReplayAudioSource
 from .pipeline import PipelineConfig, StreamingPipeline
+
+LOGGER = logging.getLogger("daiya")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -62,6 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 async def run(args: argparse.Namespace) -> int:
+    LOGGER.info("Starting Daiya v0 offline file replay pipeline with args: %s", args)
     pipeline = StreamingPipeline(
         PipelineConfig(
             asr_model=args.asr_model,
