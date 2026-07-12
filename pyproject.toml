@@ -12,4 +12,5 @@ members = [
    "lab/statefull-diarization",
    "training/processor/whisper",
    "training/whisper",
+   "training/harness",
 ]
