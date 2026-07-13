@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   ArrowClockwiseIcon,
   CaretLeftIcon,
@@ -154,6 +155,203 @@ function Disposition({ value }: { value: string }) {
   return <span className={`disposition disposition--${value}`}>{value}</span>;
 }
 
+const ClipRow = memo(function ClipRow({
+  row,
+  review,
+  selected,
+  onSelect,
+}: {
+  row: LabelRow;
+  review: ReviewState | undefined;
+  selected: boolean;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={selected ? "clip is-selected" : "clip"}
+      onClick={() => onSelect(row.id)}
+    >
+      <span className="clip-top">
+        <span className="clip-index">{String(row.index).padStart(4, "0")}</span>
+        <Disposition value={row.disposition} />
+      </span>
+      <span className="clip-text">
+        {(review?.label ?? row.proposedLabel ?? row.originalLabel) || "∅ Empty label"}
+      </span>
+      <span className="clip-meta">
+        {formatDuration(row.duration)} · {row.language}
+        {review && <CheckIcon size={14} weight="bold" aria-label="Reviewed" />}
+      </span>
+    </button>
+  );
+});
+
+function useCompactQueueLayout() {
+  const [isCompact, setIsCompact] = useState(() =>
+    window.matchMedia("(max-width: 780px)").matches,
+  );
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 780px)");
+    const updateLayout = () => setIsCompact(mediaQuery.matches);
+    updateLayout();
+    mediaQuery.addEventListener("change", updateLayout);
+    return () => mediaQuery.removeEventListener("change", updateLayout);
+  }, []);
+
+  return isCompact;
+}
+
+const VirtualClipList = memo(function VirtualClipList({
+  rows,
+  reviews,
+  selectedId,
+  onSelect,
+}: {
+  rows: LabelRow[];
+  reviews: Record<string, ReviewState>;
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}) {
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const isCompact = useCompactQueueLayout();
+  const selectedIndex = useMemo(
+    () => rows.findIndex((row) => row.id === selectedId),
+    [rows, selectedId],
+  );
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => (isCompact ? 242 : 100),
+    horizontal: isCompact,
+    overscan: 6,
+  });
+
+  useEffect(() => {
+    if (selectedIndex >= 0) {
+      virtualizer.scrollToIndex(selectedIndex, { align: "auto" });
+    }
+  }, [selectedIndex, virtualizer]);
+
+  const virtualRows = virtualizer.getVirtualItems();
+  const totalSize = virtualizer.getTotalSize();
+
+  return (
+    <div
+      ref={listRef}
+      className={isCompact ? "clip-list clip-list--horizontal" : "clip-list"}
+    >
+      <div
+        className="clip-list-inner"
+        style={
+          isCompact
+            ? { width: `${totalSize}px`, height: "100px" }
+            : { height: `${totalSize}px` }
+        }
+      >
+        {virtualRows.map((virtualRow) => {
+          const row = rows[virtualRow.index];
+          return (
+            <div
+              key={row.id}
+              ref={virtualizer.measureElement}
+              data-index={virtualRow.index}
+              className="clip-virtual-row"
+              style={{
+                transform: isCompact
+                  ? `translateX(${virtualRow.start}px)`
+                  : `translateY(${virtualRow.start}px)`,
+              }}
+            >
+              <ClipRow
+                row={row}
+                review={reviews[row.id]}
+                selected={row.id === selectedId}
+                onSelect={onSelect}
+              />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+});
+
+const ClipQueue = memo(function ClipQueue({
+  filter,
+  filterCounts,
+  query,
+  reviews,
+  selectedId,
+  totalRows,
+  visibleRows,
+  onClearFilters,
+  onFilterChange,
+  onQueryChange,
+  onSelect,
+}: {
+  filter: Filter;
+  filterCounts: Record<Filter, number>;
+  query: string;
+  reviews: Record<string, ReviewState>;
+  selectedId: string | null;
+  totalRows: number;
+  visibleRows: LabelRow[];
+  onClearFilters: () => void;
+  onFilterChange: (filter: Filter) => void;
+  onQueryChange: (query: string) => void;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <aside className="queue" aria-label="Label queue">
+      <div className="queue-head">
+        <div>
+          <span className="eyebrow">Queue</span>
+          <strong>{totalRows.toLocaleString()} clips</strong>
+        </div>
+        <button
+          className="icon-button"
+          type="button"
+          onClick={onClearFilters}
+          title="Clear filters"
+        >
+          <ArrowClockwiseIcon size={17} aria-hidden />
+        </button>
+      </div>
+      <label className="search">
+        <MagnifyingGlassIcon size={16} aria-hidden />
+        <span className="sr-only">Search labels</span>
+        <input
+          value={query}
+          onChange={(event) => onQueryChange(event.target.value)}
+          placeholder="Search text, path, reason"
+        />
+      </label>
+      <div className="filters" aria-label="Disposition filters">
+        {FILTERS.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={filter === item.id ? "filter is-active" : "filter"}
+            onClick={() => onFilterChange(item.id)}
+            aria-pressed={filter === item.id}
+          >
+            {item.label}
+            <span>{filterCounts[item.id]}</span>
+          </button>
+        ))}
+      </div>
+      <VirtualClipList
+        rows={visibleRows}
+        reviews={reviews}
+        selectedId={selectedId}
+        onSelect={onSelect}
+      />
+    </aside>
+  );
+});
+
 function App() {
   const [page, setPage] = useState<Page>(() =>
     window.location.pathname === "/workbench" ? "workbench" : "configure",
@@ -255,7 +453,8 @@ function App() {
     return () => window.clearInterval(id);
   }, [jobs]);
 
-  const selected = rows.find((row) => row.id === selectedId) ?? null;
+  const rowsById = useMemo(() => new Map(rows.map((row) => [row.id, row])), [rows]);
+  const selected = selectedId ? (rowsById.get(selectedId) ?? null) : null;
   const automaticText = selected
     ? (selected.proposedLabel ?? selected.originalLabel)
     : "";
@@ -263,7 +462,30 @@ function App() {
   const hasUnsavedChange = Boolean(
     selected && draft !== (savedText ?? automaticText),
   );
-  const reviewCount = Object.keys(reviews).length;
+  const filterCounts = useMemo(() => {
+    const counts: Record<Filter, number> = {
+      all: rows.length,
+      keep: 0,
+      review: 0,
+      correct: 0,
+      drop: 0,
+      reviewed: Object.keys(reviews).length,
+      unreviewed: 0,
+    };
+    for (const row of rows) {
+      if (
+        row.disposition === "keep" ||
+        row.disposition === "review" ||
+        row.disposition === "correct" ||
+        row.disposition === "drop"
+      ) {
+        counts[row.disposition] += 1;
+      }
+    }
+    counts.unreviewed = rows.length - counts.reviewed;
+    return counts;
+  }, [reviews, rows]);
+  const reviewCount = filterCounts.reviewed;
   const visibleRows = useMemo(
     () =>
       rows.filter((row) => {
@@ -290,6 +512,14 @@ function App() {
       }),
     [filter, query, reviews, rows],
   );
+  const selectedVisibleIndex = useMemo(
+    () => visibleRows.findIndex((row) => row.id === selectedId),
+    [selectedId, visibleRows],
+  );
+  const clearFilters = useCallback(() => {
+    setFilter("all");
+    setQuery("");
+  }, []);
   const autoJob = jobs.find(
     (job) =>
       job.name === "Auto-label audio" &&
@@ -457,10 +687,7 @@ function App() {
   };
 
   const selectRelative = (delta: number) => {
-    const target =
-      visibleRows[
-        visibleRows.findIndex((row) => row.id === selectedId) + delta
-      ];
+    const target = visibleRows[selectedVisibleIndex + delta];
     if (target) setSelectedId(target.id);
   };
 
@@ -491,6 +718,24 @@ function App() {
       );
   };
 
+  const keyboardActionsRef = useRef<{
+    save: () => void;
+    selectRelative: (delta: number) => void;
+    seekAndPlayAudio: (position: number) => void;
+    startOrStopAudio: () => void;
+  }>({
+    save: () => {},
+    selectRelative: () => {},
+    seekAndPlayAudio: () => {},
+    startOrStopAudio: () => {},
+  });
+  keyboardActionsRef.current = {
+    save: () => void save(),
+    selectRelative,
+    seekAndPlayAudio,
+    startOrStopAudio,
+  };
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const key = event.key.toLocaleLowerCase();
@@ -503,17 +748,17 @@ function App() {
       }
       if (event.ctrlKey && key === "s") {
         event.preventDefault();
-        void save();
+        keyboardActionsRef.current.save();
         return;
       }
       if (event.altKey && (event.key === "ArrowUp" || key === "a")) {
         event.preventDefault();
-        selectRelative(-1);
+        keyboardActionsRef.current.selectRelative(-1);
         return;
       }
       if (event.altKey && (event.key === "ArrowDown" || key === "d")) {
         event.preventDefault();
-        selectRelative(1);
+        keyboardActionsRef.current.selectRelative(1);
         return;
       }
       const target = event.target as HTMLElement | null;
@@ -525,7 +770,7 @@ function App() {
       const digitMatch = event.code.match(/^(?:Digit|Numpad)([0-9])$/);
       if (!editing && digitMatch) {
         event.preventDefault();
-        seekAndPlayAudio(Number(digitMatch[1]) / 10);
+        keyboardActionsRef.current.seekAndPlayAudio(Number(digitMatch[1]) / 10);
         return;
       }
       if (
@@ -533,21 +778,12 @@ function App() {
         !editing
       ) {
         event.preventDefault();
-        startOrStopAudio();
+        keyboardActionsRef.current.startOrStopAudio();
       }
     };
     document.body.addEventListener("keydown", onKeyDown, { capture: true, passive: false  });
     return () => document.body.removeEventListener("keydown", onKeyDown, { capture: true });
-  }, [draft, reviews, selectedId, session, visibleRows]);
-
-  const count = (id: Filter) =>
-    id === "all"
-      ? rows.length
-      : id === "reviewed"
-        ? reviewCount
-        : id === "unreviewed"
-          ? rows.length - reviewCount
-          : rows.filter((row) => row.disposition === id).length;
+  }, []);
 
   return (
     <main className="min-h-screen">
@@ -937,79 +1173,19 @@ function App() {
 
       {page === "workbench" && rows.length > 0 && (
         <section className="workbench">
-          <aside className="queue" aria-label="Label queue">
-            <div className="queue-head">
-              <div>
-                <span className="eyebrow">Queue</span>
-                <strong>{rows.length.toLocaleString()} clips</strong>
-              </div>
-              <button
-                className="icon-button"
-                type="button"
-                onClick={() => {
-                  setFilter("all");
-                  setQuery("");
-                }}
-                title="Clear filters"
-              >
-                <ArrowClockwiseIcon size={17} aria-hidden />
-              </button>
-            </div>
-            <label className="search">
-              <MagnifyingGlassIcon size={16} aria-hidden />
-              <span className="sr-only">Search labels</span>
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search text, path, reason"
-              />
-            </label>
-            <div className="filters" aria-label="Disposition filters">
-              {FILTERS.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={filter === item.id ? "filter is-active" : "filter"}
-                  onClick={() => setFilter(item.id)}
-                  aria-pressed={filter === item.id}
-                >
-                  {item.label}
-                  <span>{count(item.id)}</span>
-                </button>
-              ))}
-            </div>
-            <div className="clip-list">
-              {visibleRows.map((row) => (
-                <button
-                  key={row.id}
-                  type="button"
-                  className={
-                    row.id === selectedId ? "clip is-selected" : "clip"
-                  }
-                  onClick={() => setSelectedId(row.id)}
-                >
-                  <span className="clip-top">
-                    <span className="clip-index">
-                      {String(row.index).padStart(4, "0")}
-                    </span>
-                    <Disposition value={row.disposition} />
-                  </span>
-                  <span className="clip-text">
-                    {(reviews[row.id]?.label ??
-                      row.proposedLabel ??
-                      row.originalLabel) ||
-                      "∅ Empty label"}
-                  </span>
-                  <span className="clip-meta">
-                    {formatDuration(row.duration)} · {row.language}
-                    {reviews[row.id] && (
-                      <CheckIcon size={14} weight="bold" aria-label="Reviewed" />
-                    )}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </aside>
+          <ClipQueue
+            filter={filter}
+            filterCounts={filterCounts}
+            query={query}
+            reviews={reviews}
+            selectedId={selectedId}
+            totalRows={rows.length}
+            visibleRows={visibleRows}
+            onClearFilters={clearFilters}
+            onFilterChange={setFilter}
+            onQueryChange={setQuery}
+            onSelect={setSelectedId}
+          />
           {selected && (
             <article className="editor">
               <div className="editor-top">
@@ -1023,10 +1199,7 @@ function App() {
                   <button
                     className="icon-button"
                     type="button"
-                    disabled={
-                      visibleRows.findIndex((row) => row.id === selected.id) <=
-                      0
-                    }
+                    disabled={selectedVisibleIndex <= 0}
                     onClick={() => selectRelative(-1)}
                     aria-label="Previous clip"
                   >
@@ -1035,10 +1208,7 @@ function App() {
                   <button
                     className="icon-button"
                     type="button"
-                    disabled={
-                      visibleRows.findIndex((row) => row.id === selected.id) ===
-                      visibleRows.length - 1
-                    }
+                    disabled={selectedVisibleIndex === visibleRows.length - 1}
                     onClick={() => selectRelative(1)}
                     aria-label="Next clip"
                   >

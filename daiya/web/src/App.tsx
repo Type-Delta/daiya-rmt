@@ -71,15 +71,14 @@ function srtTime(s: number): string {
 }
 
 function toSrt(segments: Segment[]): string {
-  return (
-    segments
-      .filter((s) => s.text.trim())
-      .map((s, i) => {
-        const label = s.speaker ? `${s.speaker}: ` : '';
-        return `${i + 1}\n${srtTime(s.start)} --> ${srtTime(s.end)}\n${label}${s.text.trim()}`;
-      })
-      .join('\n\n') + '\n'
-  );
+  const entries: string[] = [];
+  for (const segment of segments) {
+    const text = segment.text.trim();
+    if (!text) continue;
+    const label = segment.speaker ? `${segment.speaker}: ` : '';
+    entries.push(`${entries.length + 1}\n${srtTime(segment.start)} --> ${srtTime(segment.end)}\n${label}${text}`);
+  }
+  return `${entries.join('\n\n')}\n`;
 }
 
 function downloadSrt(segments: Segment[]): void {
@@ -583,6 +582,7 @@ function Transcript({ segments, status }: { segments: Segment[]; status: Status 
 const RUN_GAP_SECONDS = 1.0;
 
 interface SpeakerRun {
+  id: string;
   speaker: string | null; // null = silence / no speaker detected
   start: number;
   end: number;
@@ -598,15 +598,15 @@ function buildRuns(segments: Segment[], clock: number): SpeakerRun[] {
       continue;
     }
     if (last && s.start - last.end > RUN_GAP_SECONDS) {
-      runs.push({ speaker: null, start: last.end, end: s.start });
+      runs.push({ id: `silence-after-${last.id}`, speaker: null, start: last.end, end: s.start });
     }
-    runs.push({ speaker: s.speaker, start: s.start, end: s.end });
+    runs.push({ id: s.segment_id, speaker: s.speaker, start: s.start, end: s.end });
   }
   const last = runs[runs.length - 1];
   if (!last) {
-    if (clock > 0) runs.push({ speaker: null, start: 0, end: clock });
+    if (clock > 0) runs.push({ id: 'silence-start', speaker: null, start: 0, end: clock });
   } else if (clock - last.end > RUN_GAP_SECONDS) {
-    runs.push({ speaker: null, start: last.end, end: clock });
+    runs.push({ id: `silence-after-${last.id}`, speaker: null, start: last.end, end: clock });
   }
   return runs;
 }
@@ -643,7 +643,7 @@ function SpeakerTimeline({ segments, clock, status }: { segments: Segment[]; clo
           const live = status === 'live' && i === runs.length - 1;
           const color = colorOf(r.speaker);
           return (
-            <div key={i} className="flex items-center gap-3 py-1.5">
+            <div key={r.id} className="flex items-center gap-3 py-1.5">
               <span
                 aria-hidden
                 className={`h-2 w-2 shrink-0 rounded-full ${live ? 'animate-pulse' : ''}`}
@@ -744,23 +744,20 @@ function ConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
-  const confirmRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
   useEffect(() => {
-    confirmRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onCancel();
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onCancel]);
+    const dialog = dialogRef.current;
+    dialog?.showModal();
+    return () => dialog?.close();
+  }, []);
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50" onClick={onCancel} />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="confirm-title"
-        className="relative w-full max-w-sm rounded-lg border border-edge bg-surface p-5 shadow-xl"
-      >
+    <dialog
+      ref={dialogRef}
+      aria-labelledby="confirm-title"
+      onClose={onCancel}
+      className="m-auto w-full max-w-sm rounded-lg border border-edge bg-surface p-5 shadow-xl backdrop:bg-black/50"
+    >
         <h2 id="confirm-title" className="text-sm font-semibold">
           {title}
         </h2>
@@ -774,16 +771,15 @@ function ConfirmDialog({
             Cancel
           </button>
           <button
-            ref={confirmRef}
             type="button"
+            autoFocus
             onClick={onConfirm}
             className={`h-9 rounded-md bg-primary px-4 text-sm font-semibold text-primary-ink transition-opacity duration-150 hover:opacity-90 ${FOCUS_RING}`}
           >
             {confirmLabel}
           </button>
         </div>
-      </div>
-    </div>
+    </dialog>
   );
 }
 
@@ -944,7 +940,12 @@ export default function App() {
 
       {settingsOpen && (
         <div className="fixed inset-0 z-30 lg:hidden">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setSettingsOpen(false)} />
+          <button
+            type="button"
+            aria-label="Close settings"
+            onClick={() => setSettingsOpen(false)}
+            className="absolute inset-0 bg-black/50"
+          />
           <div className="absolute inset-y-0 right-0 w-80 max-w-[85vw] overflow-y-auto border-l border-edge bg-surface">
             <SettingsPanel
               settings={settings}
