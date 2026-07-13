@@ -1,8 +1,23 @@
 # Daiya-RMT
 
-Daiya-RMT is a research prototype for near-real-time mixed-lingual transcription, focused on Thai-English and Japanese-English conversations with speaker diarization and context-aware correction. The current repo contains the v0 API/UI prototype, Whisper LoRA training tools, dataset preparation utilities, and diarization experiments.
+Daiya is a research project for near-real-time mixed-lingual transcription, focused on Thai-English and Japanese-English conversations with speaker diarization and context-aware correction. The current repo contains the v0 API/UI prototype, Whisper LoRA training tools, dataset preparation utilities, and diarization experiments.
+
+For more information, see [AGENTS.md](AGENTS.md).
 
 The project uses a root `uv` workspace. Run commands from the repository root unless a command explicitly says otherwise.
+
+> [!NOTE]
+> Please excuse the current state of this project. I let my agents run wild, generating a lot of slop to get a working prototype. The cleanup will come later. That's a promise. 😆
+
+## Why Making This?
+
+Because I couldn't find a project/service for summarizing meetings with all of the following features:
+- Mixed-lingual transcription (Thai-English, Japanese-English, etc.)
+- Speaker diarization (so that the same speaker is consistently labeled across a meeting)
+- Context-aware correction
+- Real-time or near-real-time operation of all features above, so that the meeting can be summarized while it is happening.
+
+Daiya is not going to be a meeting summarization app, but it will be a core engine of one.
 
 ## Workspace Layout
 
