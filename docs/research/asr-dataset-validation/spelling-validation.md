@@ -5,12 +5,12 @@
 Spelling validation is an anomaly detector, not an automatic transcript editor.
 Thai word segmentation, Japanese dictionary coverage, English technical terms,
 names, acronyms, and transliteration all create legitimate out-of-vocabulary text.
-The cleaning manifest therefore maps spelling findings to `review` and records
+The validation manifest therefore maps spelling findings to `review` and records
 checker provenance; spelling alone cannot create a `correct` disposition.
 
 The implementation routes contiguous Thai, Japanese (Han/Hiragana/Katakana), and
 Latin spans to separate adapters. A versioned allowlist handles project terminology
-without hard-coding lexical replacements in the cleaning logic.
+without hard-coding lexical replacements in the validation logic.
 The operational review threshold is applied independently per language, avoiding
 dilution of a short Thai or Japanese error inside a much longer English span.
 

@@ -18,6 +18,13 @@ def _int(name: str, default: int) -> int:
     return int(os.getenv(name, str(default)))
 
 
+def _positive_int(name: str, default: int) -> int:
+    value = _int(name, default)
+    if value < 1:
+        raise ValueError(f"{name} must be at least 1")
+    return value
+
+
 def _float(name: str, default: float) -> float:
     return float(os.getenv(name, str(default)))
 
@@ -48,6 +55,7 @@ class PipelineConfig:
 
     ffmpeg_bin: str
     ffmpeg_max_workers: int
+    ffmpeg_max_in_flight: int
     sample_rate: int
     channels: int
     audio_codec: str
@@ -75,6 +83,7 @@ class PipelineConfig:
     openrouter_app_name: str
     openrouter_site_url: str
     llm_max_workers: int
+    llm_max_in_flight: int
     llm_temperature: float
     llm_timeout_seconds: float
     llm_audio_format: str
@@ -84,6 +93,8 @@ class PipelineConfig:
     language_hint: str
     text_column: str
     keep_intermediate: bool
+    export_max_workers: int
+    export_max_in_flight: int
 
     @classmethod
     def load(cls, env_file: Path | None = None) -> "PipelineConfig":
@@ -98,7 +109,8 @@ class PipelineConfig:
             dataset_split=_str("DAIYA_DATASET_SPLIT", "train"),
             audio_extensions=_csv(_str("DAIYA_AUDIO_EXTENSIONS", ".wav,.mp3,.m4a,.flac,.ogg,.opus,.aac,.wma,.webm,.mp4,.mov,.mkv")),
             ffmpeg_bin=_str("DAIYA_FFMPEG_BIN", "ffmpeg"),
-            ffmpeg_max_workers=_int("DAIYA_FFMPEG_MAX_WORKERS", 4),
+            ffmpeg_max_workers=_positive_int("DAIYA_FFMPEG_MAX_WORKERS", 4),
+            ffmpeg_max_in_flight=_positive_int("DAIYA_FFMPEG_MAX_IN_FLIGHT", 4),
             sample_rate=_int("DAIYA_SAMPLE_RATE", 16000),
             channels=_int("DAIYA_CHANNELS", 1),
             audio_codec=_str("DAIYA_AUDIO_CODEC", "pcm_s16le"),
@@ -120,7 +132,8 @@ class PipelineConfig:
             openrouter_model=_str("DAIYA_OPENROUTER_MODEL", "openai/gpt-4o-audio-preview"),
             openrouter_app_name=_str("DAIYA_OPENROUTER_APP_NAME", "Daiya-RMT"),
             openrouter_site_url=_str("DAIYA_OPENROUTER_SITE_URL", "http://localhost"),
-            llm_max_workers=_int("DAIYA_LLM_MAX_WORKERS", 2),
+            llm_max_workers=_positive_int("DAIYA_LLM_MAX_WORKERS", 2),
+            llm_max_in_flight=_positive_int("DAIYA_LLM_MAX_IN_FLIGHT", 2),
             llm_temperature=_float("DAIYA_LLM_TEMPERATURE", 0.0),
             llm_timeout_seconds=_float("DAIYA_LLM_TIMEOUT_SECONDS", 120.0),
             llm_audio_format=_str("DAIYA_LLM_AUDIO_FORMAT", "wav"),
@@ -130,6 +143,8 @@ class PipelineConfig:
             language_hint=_str("DAIYA_LANGUAGE_HINT", "mixed"),
             text_column=_str("DAIYA_TEXT_COLUMN", "text"),
             keep_intermediate=_bool(os.getenv("DAIYA_KEEP_INTERMEDIATE"), False),
+            export_max_workers=_positive_int("DAIYA_EXPORT_MAX_WORKERS", 4),
+            export_max_in_flight=_positive_int("DAIYA_EXPORT_MAX_IN_FLIGHT", 4),
         )
 
     def find_audio_files(self) -> list[Path]:

@@ -1,5 +1,5 @@
 {
-  "schema_version": "cleaning-eval-1",
+  "schema_version": "validation-eval-1",
   "gold_count": 109,
   "exact_audio_overlap_count": 82,
   "unmatched_gold_count": 27,

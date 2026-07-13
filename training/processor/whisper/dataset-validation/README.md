@@ -1,4 +1,4 @@
-# Daiya dataset cleaning baseline
+# Daiya dataset validation baseline
 
 This directory contains a dependency-light, audit-friendly baseline for evaluating
 ASR dataset metadata. It reads metadata and writes a separate manifest; it never
@@ -33,8 +33,8 @@ Input is JSONL with `uri`, `label`, and `duration_seconds`; optional `id` is use
 source identity. Missing labels or malformed durations become explicit reasons.
 
 ```console
-python -m daiya_dataset_cleaning.cli input.jsonl manifest.jsonl
-python -m daiya_dataset_cleaning.cli input.jsonl manifest.csv --format csv \
+python -m daiya_dataset_validation.cli input.jsonl manifest.jsonl
+python -m daiya_dataset_validation.cli input.jsonl manifest.csv --format csv \
   --expected-script thai --expected-script latin
 ```
 
@@ -48,26 +48,47 @@ mixed-language examples.
 Install only the language adapters needed for an experiment:
 
 ```console
-pip install -e "training/dataset_cleaning[spelling]"
+pip install -e "training/processor/whisper/dataset-validation[spelling]"
 ```
 
 Generate spelling evidence separately so different checkers and thresholds can be
 compared without rebuilding or mutating the source dataset:
 
 ```console
-python training/dataset_cleaning/scripts/run_spelling_validation.py \
+python training/processor/whisper/dataset-validation/scripts/run_spelling_validation.py \
   metadata.jsonl spelling-pn.jsonl \
   --thai-engine pn \
   --japanese-dictionary core \
   --english-dictionary frequency_dictionary_en_82_765.txt \
-  --allowlist technical-terms.txt
+  --allowlist technical-terms.txt \
+  --workers 4 \
+  --max-in-flight 8
 
-python training/dataset_cleaning/scripts/build_candidate_manifest.py \
+python training/processor/whisper/dataset-validation/scripts/build_candidate_manifest.py \
   metadata.jsonl /dataset/root candidate-manifest-v2.jsonl \
   --dataset-version dataset-v2 \
   --spelling-results spelling-pn.jsonl \
-  --spelling-review-threshold 0.2
+  --spelling-review-threshold 0.2 \
+  --hash-workers 4
 ```
+
+Spelling validation is CPU-bound, so `--workers` uses Windows-safe spawned
+processes. Each process initializes its own checker, tokenizer, dictionary, and
+cache. `--max-in-flight` bounds queued records; results are still emitted in
+canonical metadata order. The default is one worker, and raw issue text remains
+opt-in with `--include-issue-text`.
+
+Audio hashing is disk-I/O bounded, so `build_candidate_manifest.py` uses a
+bounded `ThreadPoolExecutor`. `--hash-workers` controls its conservative thread
+count (default `4`); source hashes remain aligned to metadata order and
+protected-gold hashes retain precedence over candidate decisions. Metadata audio
+paths are resolved and rejected if they escape `audio_root`, including through a
+symlink.
+
+Both scripts resolve the output path before doing any work and reject aliases of
+their metadata, checker resources, predictions, spelling results, audio sources,
+or protected-gold inputs/directories. Existing inputs and outputs therefore remain
+unchanged when an unsafe path is supplied.
 
 Run PyThaiNLP engines (`pn`, `symspellpy`, `phunspell`) as separate outputs when
 comparing them. Do not combine their issue counts into a single threshold-tuning
@@ -86,7 +107,7 @@ must remain a local diagnostic artifact rather than a committed/shared result.
 ## API sketch
 
 ```python
-from daiya_dataset_cleaning import SourceIdentity, decide
+from daiya_dataset_validation import SourceIdentity, decide
 
 result = decide(
     SourceIdentity("stable-id", "dataset/audio/example.wav", dataset="train"),
@@ -103,5 +124,5 @@ change can be reproduced and audited.
 Run focused tests without installing dependencies:
 
 ```console
-python -m unittest discover -s training/dataset_cleaning/tests -v
+python -m unittest discover -s training/processor/whisper/dataset-validation/tests -v
 ```

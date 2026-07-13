@@ -1,4 +1,4 @@
-# ASR dataset cleaning experiment v1
+# ASR dataset validation experiment v1
 
 Date: 2026-07-12
 
@@ -80,29 +80,29 @@ Run from the repository root. The commands read source resources from the main
 worktree and write only the requested candidate manifest/summary.
 
 ```powershell
-$env:PYTHONPATH = 'training/dataset_cleaning/src'
+$env:PYTHONPATH = 'training/processor/whisper/dataset-validation/src'
 $meta = 'C:/JokaMain/ProjectShowRoom/daiya-rmt/training/dataset/hf_datasets/whisper/metadata.jsonl'
 $audio = 'C:/JokaMain/ProjectShowRoom/daiya-rmt/training/dataset/hf_datasets/whisper'
 $gold = 'C:/JokaMain/ProjectShowRoom/daiya-rmt/training/dataset/manual-label/m2-label-ref/audio'
 $pred = 'C:/JokaMain/ProjectShowRoom/daiya-rmt/training/whisper/runs/m3.1/benchmarks/primary-v1/details_20260711T154402Z_models-4-ef6d5ef557f4_benchmark_isolated_rolling_initial_prompt.jsonl'
 
-python training/dataset_cleaning/scripts/build_candidate_manifest.py `
-  $meta $audio "$env:TEMP/daiya-cleaning-v1-manifest.jsonl" `
+python training/processor/whisper/dataset-validation/scripts/build_candidate_manifest.py `
+  $meta $audio "$env:TEMP/daiya-validation-v1-manifest.jsonl" `
   --dataset-version 'hf-whisper-9d56736b055df552fa20b325fce0720b87d4bd29f0b166fd4d1197d87874a028' `
   --protected-gold-dir $gold --predictions $pred `
   --expected-script thai --expected-script latin
 
-python training/dataset_cleaning/scripts/evaluate_gold.py `
+python training/processor/whisper/dataset-validation/scripts/evaluate_gold.py `
   --metadata $meta --audio-root $audio --gold-audio $gold `
   --gold-labels 'C:/JokaMain/ProjectShowRoom/daiya-rmt/training/dataset/manual-label/m2-label-ref/ref_labels.txt' `
-  --predictions $pred --output docs/experiments/asr-dataset-cleaning-v1/evaluation-summary.json
+  --predictions $pred --output docs/experiments/asr-dataset-validation-v1/evaluation-summary.json
 ```
 
 Focused verification:
 
 ```powershell
-python -m unittest discover -s training/dataset_cleaning/tests -v
-python -m compileall -q training/dataset_cleaning/src training/dataset_cleaning/scripts
+python -m unittest discover -s training/processor/whisper/dataset-validation/tests -v
+python -m compileall -q training/processor/whisper/dataset-validation/src training/processor/whisper/dataset-validation/scripts
 ```
 
 ## Recommendation

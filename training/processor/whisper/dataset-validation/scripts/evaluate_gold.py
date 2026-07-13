@@ -15,7 +15,7 @@ from pathlib import Path
 import re
 from typing import Any
 
-from daiya_dataset_cleaning.normalize import normalize_text
+from daiya_dataset_validation.normalize import normalize_text
 
 
 def _sha256(path: Path) -> str:
@@ -148,7 +148,7 @@ def evaluate(metadata: Path, audio_root: Path, gold_audio: Path, gold_labels: Pa
 
     source_groups = sorted({str(item["row"].get("source_file", "unknown")) for item in mapped})
     return {
-        "schema_version": "cleaning-eval-1",
+        "schema_version": "validation-eval-1",
         "gold_count": len(labels),
         "exact_audio_overlap_count": len(mapped),
         "unmatched_gold_count": unmatched,

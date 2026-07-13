@@ -1,18 +1,19 @@
-"""Build a versioned, non-mutating candidate-cleaning manifest from metadata."""
+"""Build a versioned, non-mutating candidate-validation manifest from metadata."""
 
 from __future__ import annotations
 
 import argparse
 from collections import Counter
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import hashlib
 import json
 import math
 from pathlib import Path
 from typing import Any, Iterable
 
-from daiya_dataset_cleaning.decision import DecisionPolicy, decide, disposition_for_reasons
-from daiya_dataset_cleaning.io import write_jsonl
-from daiya_dataset_cleaning.models import (
+from daiya_dataset_validation.decision import DecisionPolicy, decide, disposition_for_reasons
+from daiya_dataset_validation.io import write_jsonl
+from daiya_dataset_validation.models import (
     Confidence,
     Disposition,
     Evidence,
@@ -21,7 +22,8 @@ from daiya_dataset_cleaning.models import (
     ReasonCode,
     SourceIdentity,
 )
-from daiya_dataset_cleaning.normalize import normalize_text, source_identity
+from daiya_dataset_validation.normalize import normalize_text, source_identity
+from daiya_dataset_validation.path_safety import reject_output_aliases
 
 
 def _rows(path: Path) -> Iterable[dict[str, Any]]:
@@ -43,10 +45,80 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _protected_hashes(directory: Path | None) -> set[str]:
+def _sha256_if_file(path: Path) -> str | None:
+    return _sha256(path) if path.is_file() else None
+
+
+def _parallel_hashes(paths: Iterable[Path], hash_workers: int) -> list[str | None]:
+    """Hash paths in input order with a bounded thread submission window."""
+    if hash_workers < 1:
+        raise ValueError("hash_workers must be at least 1")
+    executor = ThreadPoolExecutor(max_workers=hash_workers)
+    pending: dict[int, Any] = {}
+    paths_iter = iter(paths)
+    results: list[str | None] = []
+    next_index = 0
+    next_to_emit = 0
+    max_in_flight = max(1, hash_workers * 2)
+
+    def fill() -> None:
+        nonlocal next_index
+        while len(pending) < max_in_flight:
+            try:
+                path = next(paths_iter)
+            except StopIteration:
+                return
+            pending[next_index] = executor.submit(_sha256_if_file, path)
+            next_index += 1
+
+    try:
+        fill()
+        while pending:
+            done, _ = wait(tuple(pending.values()), return_when=FIRST_COMPLETED)
+            for future in done:
+                error = future.exception()
+                if error is not None:
+                    raise error
+            while next_to_emit in pending and pending[next_to_emit].done():
+                results.append(pending.pop(next_to_emit).result())
+                next_to_emit += 1
+            fill()
+    except BaseException:
+        for future in pending.values():
+            future.cancel()
+        executor.shutdown(wait=False, cancel_futures=True)
+        raise
+    else:
+        executor.shutdown(wait=True)
+    return results
+
+
+def _protected_hashes(directory: Path | None, hash_workers: int = 4) -> set[str]:
     if directory is None:
         return set()
-    return {_sha256(path) for path in directory.glob("*.wav") if path.is_file()}
+    return {value for value in _parallel_hashes(directory.glob("*.wav"), hash_workers) if value is not None}
+
+
+def _protected_audio_paths(directory: Path | None) -> tuple[Path, ...]:
+    if directory is None:
+        return ()
+    return tuple(directory.glob("*.wav"))
+
+
+def _resolve_audio_paths(input_rows: list[dict[str, Any]], audio_root: Path) -> list[Path]:
+    root = audio_root.resolve()
+    resolved: list[Path] = []
+    for row_number, row in enumerate(input_rows, 1):
+        uri = str(row.get("file_name") or row.get("uri") or "").replace("\\", "/")
+        try:
+            path = (root / Path(uri)).resolve()
+            path.relative_to(root)
+        except (OSError, ValueError) as exc:
+            raise ValueError(
+                f"metadata.jsonl#line={row_number}: audio path escapes audio_root: {uri!r}"
+            ) from exc
+        resolved.append(path)
+    return resolved
 
 
 def _prediction_groups(path: Path | None) -> dict[str, list[dict[str, Any]]]:
@@ -200,20 +272,37 @@ def build_manifest(
     min_consensus_views: int = 2,
     spelling_review_threshold: float = 0.2,
     spelling_min_issues: int = 1,
+    hash_workers: int = 4,
 ) -> dict[str, int | str]:
     if not 0 <= spelling_review_threshold <= 1:
         raise ValueError("spelling_review_threshold must be in [0, 1]")
     if spelling_min_issues < 1:
         raise ValueError("spelling_min_issues must be at least 1")
-    protected = _protected_hashes(protected_gold_dir)
+    if hash_workers < 1:
+        raise ValueError("hash_workers must be at least 1")
+    reject_output_aliases(
+        output_path,
+        files=(
+            ("metadata", metadata_path),
+            ("spelling results", spelling_results_path),
+            ("predictions", predictions_path),
+        ),
+        directories=(
+            ("audio source directory", audio_root),
+            ("protected-gold directory", protected_gold_dir),
+        ),
+    )
+    input_rows = list(_rows(metadata_path))
+    source_paths = _resolve_audio_paths(input_rows, audio_root)
+    reject_output_aliases(
+        output_path,
+        files=(("protected-gold input", path) for path in _protected_audio_paths(protected_gold_dir)),
+        directories=(("audio source path/directory", path) for path in source_paths),
+    )
     predictions = _prediction_groups(predictions_path)
     spelling_results = _spelling_groups(spelling_results_path)
-    input_rows = list(_rows(metadata_path))
-    content_hashes: list[str | None] = []
-    for row in input_rows:
-        uri = str(row.get("file_name") or row.get("uri") or "").replace("\\", "/")
-        path = audio_root / uri
-        content_hashes.append(_sha256(path) if path.is_file() else None)
+    protected = _protected_hashes(protected_gold_dir, hash_workers)
+    content_hashes = _parallel_hashes(source_paths, hash_workers)
     duplicate_counts = Counter(value for value in content_hashes if value is not None)
     records: list[ManifestRecord] = []
     counts: dict[str, int] = {}
@@ -307,6 +396,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-consensus-views", type=int, default=2)
     parser.add_argument("--spelling-review-threshold", type=float, default=0.2)
     parser.add_argument("--spelling-min-issues", type=int, default=1)
+    parser.add_argument("--hash-workers", type=int, default=4, help="threads used for audio hashing")
     args = parser.parse_args(argv)
     summary = build_manifest(
         args.metadata,
@@ -320,6 +410,7 @@ def main(argv: list[str] | None = None) -> int:
         min_consensus_views=args.min_consensus_views,
         spelling_review_threshold=args.spelling_review_threshold,
         spelling_min_issues=args.spelling_min_issues,
+        hash_workers=args.hash_workers,
     )
     print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
     return 0

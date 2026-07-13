@@ -1,4 +1,4 @@
-"""Immutable public data model for audit-friendly cleaning manifests."""
+"""Immutable public data model for audit-friendly validation manifests."""
 
 from __future__ import annotations
 

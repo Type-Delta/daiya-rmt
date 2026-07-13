@@ -1,4 +1,4 @@
-# Dataset audit: ASR cleaning experiment
+# Dataset audit: ASR validation experiment
 
 Audit date: 2026-07-12. The audit was read-only against the current worktree and `C:\JokaMain\ProjectShowRoom\daiya-rmt`; only this report and the compact aggregate fixture were created. `training/dataset/manual-label/m2-label-ref` was treated as protected human gold. Its text was parsed only for structural/count checks and was never used as pseudo-label input. No audio, labels, predictions, model dumps, caches, or secrets are reproduced here.
 
@@ -25,7 +25,7 @@ The current dataset is documented elsewhere as a relabeled M2 replacement for th
 
 The protected gold label file has four header lines followed by 109 repeated `ID|audio` / label / blank blocks (331 lines total, 109 blank). This audit never copies label content. Exact overlap was established from WAV bytes only. A collision-resistant digest of the sorted 82 overlapping SHA-256 values is recorded in the fixture, allowing future reruns to detect identity-set changes without publishing clip-level mappings.
 
-Policy for the cleaning experiment: exclude all 109 gold identities from pseudo-label generation and training candidate selection. At minimum, quarantine the 82 exact matches by SHA-256. To cover the 27 unmatched clips and possible re-encodes, add decoded-PCM hashes and robust acoustic fingerprints before claiming isolation; neither was available as retained metadata.
+Policy for the validation experiment: exclude all 109 gold identities from pseudo-label generation and training candidate selection. At minimum, quarantine the 82 exact matches by SHA-256. To cover the 27 unmatched clips and possible re-encodes, add decoded-PCM hashes and robust acoustic fingerprints before claiming isolation; neither was available as retained metadata.
 
 ## Model/output metadata available
 
@@ -67,4 +67,3 @@ Limitations: byte hashes detect exact containers only, not perceptually identica
 2. Quarantine protected gold before any pseudo-label call, then assert zero exact PCM/hash and robust-fingerprint overlap across train, validation, test, and gold.
 3. Resolve the 89 duplicate pairs, especially 42 metadata conflicts; review empty and extreme-density labels; normalize language to a controlled vocabulary while preserving the original value.
 4. Split by source recording/session (and speaker when available), never by clip, to prevent neighboring/context leakage. Keep protected gold as evaluation-only.
-

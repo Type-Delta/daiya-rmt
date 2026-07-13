@@ -1,8 +1,8 @@
-# Practical ASR dataset cleaning for Thai–English and Japanese–English code-switching
+# Practical ASR dataset validation for Thai–English and Japanese–English code-switching
 
 ## Scope and position
 
-This note proposes *experiments*, not universal cutoffs. Most cited results are from English or other multilingual settings; transfer to Thai–English (TH–EN) and Japanese–English (JA–EN) must be measured. Cleaning should preserve a frozen evaluation set and produce an auditable manifest containing raw signals, the rule/version, and the action (`keep`, `down-weight`, `repair`, `quarantine`). Prefer ranking and soft weights to deletion until a threshold has demonstrated downstream benefit.
+This note proposes *experiments*, not universal cutoffs. Most cited results are from English or other multilingual settings; transfer to Thai–English (TH–EN) and Japanese–English (JA–EN) must be measured. Validation should preserve a frozen evaluation set and produce an auditable manifest containing raw signals, the rule/version, and the action (`keep`, `down-weight`, `repair`, `quarantine`). Prefer ranking and soft weights to deletion until a threshold has demonstrated downstream benefit.
 
 ## Reproducible signals
 
@@ -26,7 +26,7 @@ The weak-supervision pipeline behind Whisper used language/transcript matching, 
 
 Noisy Student ASR iterates teacher pseudo-labeling and student training with SpecAugment, including confidence filtering and balancing [Park et al.]. slimIPL instead continuously refreshes hard LM-free pseudo-labels through a cache [Likhomanenko et al.]. These methods motivate two distinct treatments:
 
-1. **Cleaning labeled data:** use cross-fitted teacher disagreement as one diagnostic; do not silently overwrite the supplied transcript.
+1. **Validating labeled data:** use cross-fitted teacher disagreement as one diagnostic; do not silently overwrite the supplied transcript.
 2. **Using quarantined data:** retain it as unlabeled/weakly labeled audio and train with a lower unsupervised weight, augmentation, an EMA or independently initialized teacher, and periodically refreshed labels. Compare against simply dropping it.
 
 Confirmation-bias protections should be predeclared: frozen human-labeled dev/test sets; teacher and scorer trained without the scored item; at least one architecturally or data-independent view; no threshold tuning on test; preserve switch-rate, language-pair, speaker/source and duration distributions; cap pseudo-label contribution per stratum; monitor teacher–student error correlation and diversity; retain uncertain samples rather than forcing labels; and audit a small stratified sample if annotation becomes available. Iterative self-training can collapse or reinforce systematic errors, so an improvement in teacher confidence is not evidence of better transcripts.
@@ -52,7 +52,7 @@ Run TH–EN and JA–EN separately and pooled, and report results by dominant la
 
 ## Decision criteria
 
-Adopt a cleaning policy only if it:
+Adopt a validation policy only if it:
 
 - improves or is non-inferior on the frozen, human-trusted evaluation set across repeated seeds, with paired bootstrap confidence intervals over utterances (and speaker-cluster bootstrap when speaker IDs exist);
 - improves the primary normalized metric declared for each language pair (report both CER and WER or a documented language-aware word segmentation), without material regression in code-switched and rare-term slices;

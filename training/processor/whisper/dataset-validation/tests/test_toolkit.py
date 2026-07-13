@@ -9,12 +9,12 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 
-from daiya_dataset_cleaning.decision import decide
-from daiya_dataset_cleaning.io import write_csv, write_jsonl
-from daiya_dataset_cleaning.models import Confidence, Disposition, ManifestRecord, ProposedLabel, ReasonCode, SourceIdentity
-from daiya_dataset_cleaning.normalize import content_identity, normalize_text, source_identity
-from daiya_dataset_cleaning.signals import evaluate_signals, script_profile
-from daiya_dataset_cleaning.spelling import (
+from daiya_dataset_validation.decision import decide
+from daiya_dataset_validation.io import write_csv, write_jsonl
+from daiya_dataset_validation.models import Confidence, Disposition, ManifestRecord, ProposedLabel, ReasonCode, SourceIdentity
+from daiya_dataset_validation.normalize import content_identity, normalize_text, source_identity
+from daiya_dataset_validation.signals import evaluate_signals, script_profile
+from daiya_dataset_validation.spelling import (
     PyThaiNLPChecker,
     SpanCheckResult,
     SpellingIssue,
