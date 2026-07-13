@@ -1,21 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowClockwise,
-  CaretLeft,
-  CaretRight,
-  Check,
-  FileAudio,
-  FloppyDisk,
-  FolderOpen,
-  GearSix,
-  ListBullets,
-  MagnifyingGlass,
-  Play,
-  ShieldCheck,
-  Sparkle,
-  Stop,
-  WarningCircle,
-  X,
+  ArrowClockwiseIcon,
+  CaretLeftIcon,
+  CaretRightIcon,
+  CheckIcon,
+  FileAudioIcon,
+  FloppyDiskIcon,
+  FolderOpenIcon,
+  GearSixIcon,
+  ListBulletsIcon,
+  MagnifyingGlassIcon,
+  PlayIcon,
+  ShieldCheckIcon,
+  SparkleIcon,
+  StopIcon,
+  WarningCircleIcon,
+  WaveformIcon,
+  XIcon,
 } from "@phosphor-icons/react";
 import { api, audioUrl, type Job, type LabelRow, type Session } from "./api";
 
@@ -549,34 +550,36 @@ function App() {
           : rows.filter((row) => row.disposition === id).length;
 
   return (
-    <main className="app-shell">
-      <header className="topbar">
-        <div className="brand">
-          <span className="brand-mark">d</span>
+    <main className="min-h-screen">
+      <header className="sticky top-0 z-10 flex min-h-[58px] items-center justify-between gap-4 border-b border-edge bg-[color-mix(in_oklch,var(--bg)_92%,var(--surface))] px-5 py-2.5 max-[780px]:px-3.5">
+        <div className="flex items-center gap-2 text-sm tracking-[-0.01em]">
+          <span className="grid h-6 w-6 place-items-center rounded-md bg-raised text-primary" aria-hidden>
+            <WaveformIcon size={18} weight="bold" />
+          </span>
           <span>daiya</span>
-          <span className="brand-divider">/</span>
+          <span className="text-faint">/</span>
           {page === "workbench" ? (
             <button
-              className="brand-link"
+              className="border-0 bg-transparent p-0 font-[650] text-ink underline decoration-transparent underline-offset-[3px] transition-colors hover:text-primary hover:decoration-current"
               type="button"
               onClick={() => navigate("/")}
             >
               labeling
             </button>
           ) : (
-            <strong>labeling</strong>
+            <strong className="font-[650]">labeling</strong>
           )}
           {page === "workbench" && (
             <>
-              <span className="brand-divider">/</span>
-              <strong>workbench</strong>
+              <span className="text-faint">/</span>
+              <strong className="font-[650]">workbench</strong>
             </>
           )}
         </div>
-        <div className="topbar-actions">
+        <div className="flex items-center gap-2">
           {session && page === "workbench" && (
-            <span className="session-status">
-              <ShieldCheck size={15} aria-hidden /> {reviewCount}/{rows.length}{" "}
+            <span className="inline-flex items-center gap-1.5 text-xs text-muted max-[780px]:hidden">
+              <ShieldCheckIcon className="text-ok" size={15} aria-hidden /> {reviewCount}/{rows.length}{" "}
               reviewed
             </span>
           )}
@@ -586,24 +589,25 @@ function App() {
               type="button"
               onClick={() => navigate("/")}
             >
-              <GearSix size={17} aria-hidden /> Configure
+              <GearSixIcon size={17} aria-hidden /> Configure
             </button>
           )}
         </div>
       </header>
 
       {(notice || error) && (
-        <div className={`banner ${error ? "banner--error" : ""}`} role="status">
+        <div className={`flex min-h-11 items-center justify-between gap-3 border-b px-5 py-2 text-[13px] text-ink max-[780px]:px-3.5 ${error ? "border-[color-mix(in_oklch,var(--danger)_42%,var(--edge))] bg-[color-mix(in_oklch,var(--danger)_12%,var(--bg))]" : "border-[color-mix(in_oklch,var(--primary)_32%,var(--edge))] bg-[color-mix(in_oklch,var(--primary)_10%,var(--bg))]"}`} role="status">
           <span>{error ?? notice}</span>
           <button
             type="button"
+            className="grid place-items-center border-0 bg-transparent text-inherit"
             aria-label="Dismiss message"
             onClick={() => {
               setNotice(null);
               setError(null);
             }}
           >
-            <X size={16} aria-hidden />
+            <XIcon size={16} aria-hidden />
           </button>
         </div>
       )}
@@ -629,7 +633,7 @@ function App() {
             >
               <div className="panel-heading">
                 <span className="panel-icon">
-                  <Sparkle size={18} />
+                  <SparkleIcon size={18} />
                 </span>
                 <div>
                   <h2>Auto-label audio</h2>
@@ -677,9 +681,9 @@ function App() {
                 type="submit"
               >
                 {autoJob ? (
-                  <Stop size={16} weight="fill" />
+                  <StopIcon size={16} weight="fill" />
                 ) : (
-                  <Play size={16} weight="fill" />
+                  <PlayIcon size={16} weight="fill" />
                 )}
                 {autoJob
                   ? "Cancel auto-labeling"
@@ -701,7 +705,7 @@ function App() {
             >
               <div className="panel-heading">
                 <span className="panel-icon">
-                  <WarningCircle size={18} />
+                  <WarningCircleIcon size={18} />
                 </span>
                 <div>
                   <h2>Validate with spellcheck</h2>
@@ -807,9 +811,9 @@ function App() {
                 type="submit"
               >
                 {validationJob ? (
-                  <Stop size={16} weight="fill" />
+                  <StopIcon size={16} weight="fill" />
                 ) : (
-                  <Play size={16} weight="fill" />
+                  <PlayIcon size={16} weight="fill" />
                 )}
                 {validationJob
                   ? "Cancel validation"
@@ -829,7 +833,7 @@ function App() {
             >
               <div className="panel-heading">
                 <span className="panel-icon">
-                  <ListBullets size={18} />
+                  <ListBulletsIcon size={18} />
                 </span>
                 <div>
                   <h2>Open or resume workbench</h2>
@@ -878,7 +882,7 @@ function App() {
                 disabled={!configured || busy !== null}
                 type="submit"
               >
-                <FileAudio size={16} weight="fill" />
+                <FileAudioIcon size={16} weight="fill" />
                 {busy === "load" ? "Opening…" : "Open workbench"}
               </button>
             </form>
@@ -907,7 +911,7 @@ function App() {
 
       {page === "workbench" && !rows.length && restoringWorkbench && (
         <section className="empty-state workbench-loading" aria-live="polite">
-          <ArrowClockwise className="loading-icon" size={30} aria-hidden />
+          <ArrowClockwiseIcon className="loading-icon" size={30} aria-hidden />
           <h2>Restoring review queue</h2>
           <p>Loading saved labels, audio references, and review progress.</p>
           <div className="loading-lines" aria-hidden>
@@ -918,7 +922,7 @@ function App() {
 
       {page === "workbench" && !rows.length && !restoringWorkbench && (
         <section className="empty-state">
-          <FileAudio size={36} aria-hidden />
+          <FileAudioIcon size={36} aria-hidden />
           <h2>No review queue is open</h2>
           <p>Open or resume a review directory from the configuration page.</p>
           <button
@@ -948,11 +952,11 @@ function App() {
                 }}
                 title="Clear filters"
               >
-                <ArrowClockwise size={17} aria-hidden />
+                <ArrowClockwiseIcon size={17} aria-hidden />
               </button>
             </div>
             <label className="search">
-              <MagnifyingGlass size={16} aria-hidden />
+              <MagnifyingGlassIcon size={16} aria-hidden />
               <span className="sr-only">Search labels</span>
               <input
                 value={query}
@@ -999,7 +1003,7 @@ function App() {
                   <span className="clip-meta">
                     {formatDuration(row.duration)} · {row.language}
                     {reviews[row.id] && (
-                      <Check size={14} weight="bold" aria-label="Reviewed" />
+                      <CheckIcon size={14} weight="bold" aria-label="Reviewed" />
                     )}
                   </span>
                 </button>
@@ -1026,7 +1030,7 @@ function App() {
                     onClick={() => selectRelative(-1)}
                     aria-label="Previous clip"
                   >
-                    <CaretLeft size={19} />
+                    <CaretLeftIcon size={19} />
                   </button>
                   <button
                     className="icon-button"
@@ -1038,7 +1042,7 @@ function App() {
                     onClick={() => selectRelative(1)}
                     aria-label="Next clip"
                   >
-                    <CaretRight size={19} />
+                    <CaretRightIcon size={19} />
                   </button>
                 </div>
               </div>
@@ -1131,7 +1135,7 @@ function App() {
                         }
                         onClick={() => void save()}
                       >
-                        <FloppyDisk size={16} weight="fill" />
+                        <FloppyDiskIcon size={16} weight="fill" />
                         {busy === "save"
                           ? "Saving…"
                           : reviews[selected.id]
@@ -1175,7 +1179,7 @@ function App() {
                     )}
                   </dl>
                   <div className="provenance">
-                    <ShieldCheck size={18} aria-hidden />
+                    <ShieldCheckIcon size={18} aria-hidden />
                     <p>
                       <strong>
                         {session?.resumed
@@ -1285,7 +1289,7 @@ function PathField({
           disabled={picking}
           aria-label={`Choose ${label}`}
         >
-          <FolderOpen size={16} aria-hidden />
+          <FolderOpenIcon size={16} aria-hidden />
         </button>
       </span>
       {state && (
@@ -1343,7 +1347,7 @@ function JobRail({
           onClick={onRefresh}
           aria-label="Refresh jobs"
         >
-          <ArrowClockwise size={17} />
+          <ArrowClockwiseIcon size={17} />
         </button>
       </div>
       {jobs.slice(0, 3).map((job) => (

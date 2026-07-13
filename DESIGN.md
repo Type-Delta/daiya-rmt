@@ -2,15 +2,18 @@
 name: Daiya Research Workbench
 description: Calm, accountable interfaces for inspecting mixed-lingual audio and transcription evidence.
 colors:
-  bg: "oklch(0.16 0.008 110)"
-  surface: "oklch(0.205 0.01 110)"
-  raised: "oklch(0.25 0.012 110)"
-  edge: "oklch(0.32 0.012 110)"
-  ink: "oklch(0.93 0.012 110)"
-  muted: "oklch(0.7 0.015 110)"
-  primary: "oklch(0.8 0.15 115)"
+  bg: "oklch(0.16 0.016 220)"
+  surface: "oklch(0.205 0.018 220)"
+  raised: "oklch(0.25 0.02 220)"
+  edge: "oklch(0.32 0.02 220)"
+  ink: "oklch(0.93 0.012 220)"
+  muted: "oklch(0.7 0.016 220)"
+  faint: "oklch(0.56 0.016 220)"
+  primary: "oklch(0.78 0.13 205)"
+  primaryInk: "oklch(0.17 0.03 210)"
+  accent: "oklch(0.74 0.11 240)"
   danger: "oklch(0.68 0.17 25)"
-  warning: "oklch(0.79 0.13 85)"
+  warning: "oklch(0.8 0.13 85)"
   success: "oklch(0.76 0.14 150)"
 typography:
   body:
@@ -49,7 +52,7 @@ components:
 
 **Creative North Star: "The Listening Bench"**
 
-The workbench uses a dark, olive-tinted field of view so the waveform, mixed-script
+The workbench uses a dark ocean-blue field of view so the waveform, mixed-script
 label, and evidence can be read for long stretches without the interface calling
 attention to itself. It is dense by design, but never cramped: the current clip
 gets the clearest surface and the list remains a stable navigation rail.
@@ -64,26 +67,26 @@ fresh local sessions rather than implied session or job resumption.
 
 ## Colors
 
-The palette stays in a narrow olive-neutral range so the chartreuse primary and
-semantic states retain their meaning.
+The palette stays in a narrow ocean-blue neutral range. Turquoise carries the
+diamond-inspired signal without making this research instrument feel decorative.
 
 ### Primary
 
-- **Signal chartreuse** (`oklch(0.8 0.15 115)`): primary action, keyboard focus,
+- **Signal turquoise** (`oklch(0.78 0.13 205)`): primary action, keyboard focus,
   current selection, and active progress only.
 
 ### Secondary
 
-- **Evidence blue** (`oklch(0.72 0.11 250)`): linked evidence and informational
+- **Evidence blue** (`oklch(0.74 0.11 240)`): linked evidence and informational
   context; never a competing primary action.
 
 ### Neutral
 
-- **Listening field** (`oklch(0.16 0.008 110)`): page background.
-- **Bench surfaces** (`oklch(0.205 0.01 110)` and `oklch(0.25 0.012 110)`):
+- **Listening field** (`oklch(0.16 0.016 220)`): page background.
+- **Bench surfaces** (`oklch(0.205 0.018 220)` and `oklch(0.25 0.02 220)`):
   panels and selected/inset controls.
-- **Readable ink** (`oklch(0.93 0.012 110)`): primary labels and transcript text.
-- **Quiet metadata** (`oklch(0.7 0.015 110)`): paths, timestamps, and supporting
+- **Readable ink** (`oklch(0.93 0.012 220)`): primary labels and transcript text.
+- **Quiet metadata** (`oklch(0.7 0.016 220)`): paths, timestamps, and supporting
   copy; it must still remain legible.
 
 **The Signal Rule.** The primary accent marks action and current state, not
@@ -124,7 +127,7 @@ shadow paired with a border on the same resting container.
 ### Buttons
 
 - **Shape:** compact rounded rectangle (6px).
-- **Primary:** signal chartreuse with dark ink; reserved for start, save, and the
+- **Primary:** signal turquoise with dark ink; reserved for start, save, and the
   next meaningful step.
 - **Hover / Focus:** 150ms color change; a 2px offset focus outline in the primary
   color. Disabled controls retain their label but lose action emphasis.
@@ -170,7 +173,7 @@ review action remain visible without hiding the evidence.
 
 - **Do** keep transcript text, audio playback, and the save action in one visible
   working area.
-- **Do** use `oklch(0.8 0.15 115)` only for primary action, focus, or current
+- **Do** use `oklch(0.78 0.13 205)` only for primary action, focus, or current
   selection.
 - **Do** make disposition, job, and unsaved states readable without color.
 - **Do** preserve native Thai, Japanese, and English strings exactly as entered.
@@ -184,3 +187,16 @@ review action remain visible without hiding the evidence.
   hierarchy.
 - **Don't** make human edits look like source-label overwrites; provenance is part
   of the interface.
+
+## App Icon and Favicon
+
+**The shared app mark is the Phosphor `WaveformIcon` in bold weight.** It is the
+existing Daiya v0 testbed header mark and must be used by both web UIs anywhere an
+app-identifying icon is shown. It is not a substitute for semantic, task-specific
+icons.
+
+The favicon is a vector rendering of that exact mark, not a new logo. Keep one
+identical `favicon.svg` file in the project root, `daiya/web`, and
+`training/processor/whisper/web`; each UI's `index.html` must reference its local
+copy. The favicon uses the signal-turquoise foreground on the listening-field
+background so it remains recognisable in browser tabs and matches the app mark.

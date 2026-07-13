@@ -2,22 +2,19 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Palette composed around the impeccable brand seed oklch(0.350 0.075 110)
-   (olive, hue 110). Dark surface with a whisper of the seed's hue; the
-   chartreuse primary carries the identity, speaker hues carry the data. */
 :root {
-  --bg: oklch(0.16 0.008 110);
-  --surface: oklch(0.205 0.01 110);
-  --raised: oklch(0.25 0.012 110);
-  --edge: oklch(0.32 0.012 110);
-  --ink: oklch(0.93 0.012 110);
-  --muted: oklch(0.7 0.015 110);
-  --faint: oklch(0.56 0.012 110);
-  --primary: oklch(0.8 0.15 115);
-  --primary-ink: oklch(0.17 0.02 115);
-  --accent: oklch(0.72 0.11 250);
+  --bg: oklch(0.16 0.016 220);
+  --surface: oklch(0.205 0.018 220);
+  --raised: oklch(0.25 0.02 220);
+  --edge: oklch(0.32 0.02 220);
+  --ink: oklch(0.93 0.012 220);
+  --muted: oklch(0.7 0.016 220);
+  --faint: oklch(0.56 0.016 220);
+  --primary: oklch(0.78 0.13 205);
+  --primary-ink: oklch(0.17 0.03 210);
+  --accent: oklch(0.74 0.11 240);
   --danger: oklch(0.68 0.17 25);
-  --warn: oklch(0.79 0.13 85);
+  --warn: oklch(0.8 0.13 85);
   --ok: oklch(0.76 0.14 150);
 }
 
