@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 import json
+import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 
 from server import (
+    AppState,
     RequestError,
     as_path,
     build_auto_label_job,
@@ -160,8 +163,45 @@ class ServerTests(unittest.TestCase):
             reviews = root / "reviews"
             reviews.mkdir()
             (reviews / "old-review").write_text("x", encoding="utf-8")
-            with self.assertRaisesRegex(RequestError, "absent or an empty"):
+            with self.assertRaisesRegex(RequestError, "does not contain a resumable"):
                 create_session({"reviewRoot": str(reviews)}, metadata, None, audio, [loaded_row()])
+
+    def test_existing_review_session_restores_saved_decisions(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            audio = root / "audio"
+            audio.mkdir()
+            metadata = audio / "metadata.jsonl"
+            metadata.write_text(json.dumps({"file_name": "clip.wav", "text": "label"}) + "\n", encoding="utf-8")
+            review_directory = root / "review"
+            session = create_session({"reviewRoot": str(review_directory), "reviewer": "first"}, metadata, None, audio, [loaded_row()])
+            save_review(session, {"rowId": "row-1", "text": "saved revision", "action": "edited"})
+            resumed = create_session({"reviewRoot": str(review_directory), "reviewer": "second"}, metadata, None, audio, [loaded_row()])
+            self.assertTrue(resumed["resumed"])
+            self.assertEqual(resumed["reviewer"], "first")
+            self.assertEqual(resumed["reviews"]["row-1"]["human"]["label"], "saved revision")
+
+    def test_running_job_reports_progress_and_can_be_cancelled(self) -> None:
+        state = AppState()
+        job = state.add_job(
+            "fixture",
+            [[sys.executable, "-c", "import time; print('25%', flush=True); time.sleep(5)"]],
+            {},
+        )
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            active = state.job_list()[0]
+            if active["status"] == "running" and active["progress"]["fraction"] > 0:
+                break
+            time.sleep(0.03)
+        self.assertEqual(active["status"], "running")
+        self.assertGreater(active["progress"]["fraction"], 0)
+        cancelled = state.cancel_job(job["id"])
+        self.assertTrue(cancelled["cancelRequested"])
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and state.job_list()[0]["status"] != "cancelled":
+            time.sleep(0.03)
+        self.assertEqual(state.job_list()[0]["status"], "cancelled")
 
     def test_save_review_derives_provenance_from_the_canonical_row(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

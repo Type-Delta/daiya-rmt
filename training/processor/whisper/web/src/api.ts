@@ -27,18 +27,21 @@ export interface LabelRow {
 export interface Job {
   id: string;
   name: string;
-  status: 'queued' | 'running' | 'completed' | 'failed';
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
   createdAt: string;
   finishedAt: string | null;
   commands: string[][];
   outputs: Record<string, string>;
   log: string[];
+  cancelRequested: boolean;
+  progress: { current: number; total: number; fraction: number; detail: string };
 }
 
 export interface Session {
   id: string;
   directory: string;
   reviewer: string;
+  resumed: boolean;
 }
 
 export interface Review {
@@ -66,14 +69,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   configuration: () => request<WorkbenchConfig>('/api/config'),
   jobs: () => request<{ jobs: Job[] }>('/api/jobs'),
+  cancelJob: (jobId: string) => request<{ job: Job }>(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }),
   startAutoLabel: (payload: Record<string, unknown>) =>
     request<{ job: Job }>('/api/jobs/autolabel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
   startValidation: (payload: Record<string, unknown>) =>
     request<{ job: Job }>('/api/jobs/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
   loadDataset: (payload: Record<string, unknown>) =>
-    request<{ rows: LabelRow[]; session: Session }>('/api/dataset/load', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
+    request<{ rows: LabelRow[]; session: Session; reviews: Record<string, Review['human']> }>('/api/dataset/load', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
   saveReview: (payload: Record<string, unknown>) =>
     request<{ review: Review }>('/api/review/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
+  validatePath: (payload: { path: string; kind: 'file' | 'directory'; allowMissing?: boolean }) =>
+    request<{ valid: boolean; exists: boolean; path?: string; message: string }>('/api/path/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
+  pickPath: (payload: { kind: 'file' | 'directory'; initialPath: string }) =>
+    request<{ path: string | null }>('/api/path/pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
 };
 
 export function audioUrl(path: string): string {

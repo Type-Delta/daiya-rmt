@@ -41,6 +41,10 @@ All paths shown in the workbench are relative to the repository root
 (`daiya-rmt`). Relative paths entered in the GUI use that same root, while an
 absolute path remains available for data stored outside the project.
 
+The native folder/file buttons open a picker on the local workstation. Each path
+is checked as it is entered; output directories may be new, while inputs must
+already exist.
+
 ## Run
 
 Start the development GUI with one command. It starts the local label server
@@ -90,12 +94,20 @@ npm start
 
 3. The completed validation outputs are also carried into **Load the review
    queue**. Click **Open workbench**. Loading creates a new versioned review
-   directory; the configured default can be overridden when needed.
+   directory; the configured default can be overridden when needed. To resume a
+   paused review, use its existing review directory along with the same metadata
+   and candidate manifest. Saved decisions are restored from
+   `current-reviews.json`.
 
 4. Filter every automatic disposition, including **Keep**, listen to a chunk,
    and edit or confirm the human label. **Save human review** writes a provenance
    event; it never mutates the automatic source row. `Alt` + `Enter` saves the
-   active clip.
+   active clip. `Alt` + `Up` / `Alt` + `Down` changes clips. `Space` starts the
+   active clip from its beginning, or stops and rewinds it when already playing.
+
+The configuration screen is `/`; the active review screen is `/workbench`. The
+configuration fields are saved locally in the browser, so returning to `/` after
+closing a tab retains the paths needed to reopen the workbench.
 
 The source root is deliberately rejected as an auto-label output, pipeline work,
 validation output, or review output location, including equal and

@@ -14,6 +14,7 @@ import json
 import mimetypes
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import threading
@@ -153,6 +154,62 @@ def as_path(value: object, *, label: str, must_exist: bool = True, directory: bo
     return path
 
 
+def validate_ui_path(payload: dict[str, Any]) -> dict[str, Any]:
+    """Check a GUI path without creating or mutating anything."""
+
+    value = payload.get("path")
+    kind = str(payload.get("kind") or "directory")
+    allow_missing = bool(payload.get("allowMissing"))
+    if kind not in {"file", "directory"}:
+        raise RequestError("Path kind must be file or directory.")
+    if not isinstance(value, str) or not value.strip():
+        return {"valid": False, "exists": False, "message": "A path is required."}
+    candidate = Path(value).expanduser()
+    path = candidate.resolve() if candidate.is_absolute() else (REPOSITORY_ROOT / candidate).resolve()
+    if not path.exists():
+        return {
+            "valid": allow_missing,
+            "exists": False,
+            "path": project_relative_path(path),
+            "message": "A new path will be created." if allow_missing else "This path does not exist.",
+        }
+    expected = path.is_dir() if kind == "directory" else path.is_file()
+    return {
+        "valid": expected,
+        "exists": True,
+        "path": project_relative_path(path),
+        "message": "Ready." if expected else f"This path is not a {kind}.",
+    }
+
+
+def pick_ui_path(payload: dict[str, Any]) -> dict[str, Any]:
+    """Open a native local picker; browsers cannot reveal real file paths."""
+
+    kind = str(payload.get("kind") or "directory")
+    if kind not in {"file", "directory"}:
+        raise RequestError("Path kind must be file or directory.")
+    initial = payload.get("initialPath")
+    initial_dir = REPOSITORY_ROOT
+    if isinstance(initial, str) and initial.strip():
+        candidate = Path(initial).expanduser()
+        candidate = candidate.resolve() if candidate.is_absolute() else (REPOSITORY_ROOT / candidate).resolve()
+        initial_dir = candidate if candidate.is_dir() else candidate.parent
+    if not initial_dir.is_dir():
+        initial_dir = REPOSITORY_ROOT
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        window = tk.Tk()
+        window.withdraw()
+        window.attributes("-topmost", True)
+        selected = filedialog.askdirectory(parent=window, initialdir=str(initial_dir)) if kind == "directory" else filedialog.askopenfilename(parent=window, initialdir=str(initial_dir))
+        window.destroy()
+    except Exception as exc:  # pragma: no cover - platform GUI availability
+        raise RequestError(f"Unable to open the native {kind} picker: {exc}") from exc
+    return {"path": project_relative_path(Path(selected)) if selected else None}
+
+
 def child_of(child: Path, parent: Path) -> bool:
     try:
         child.resolve().relative_to(parent.resolve())
@@ -289,11 +346,23 @@ class AppState:
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.jobs: dict[str, dict[str, Any]] = {}
+        self.processes: dict[str, subprocess.Popen[str]] = {}
         self.sessions: dict[str, dict[str, Any]] = {}
         self.allowed_audio_roots: set[Path] = set()
 
     def add_job(self, name: str, commands: list[list[str]], outputs: dict[str, str]) -> dict[str, Any]:
-        job = {"id": uuid4().hex, "name": name, "status": "queued", "createdAt": iso_now(), "finishedAt": None, "commands": commands, "outputs": outputs, "log": []}
+        job = {
+            "id": uuid4().hex,
+            "name": name,
+            "status": "queued",
+            "createdAt": iso_now(),
+            "finishedAt": None,
+            "commands": commands,
+            "outputs": outputs,
+            "log": [],
+            "cancelRequested": False,
+            "progress": {"current": 0, "total": max(1, len(commands)), "fraction": 0.0, "detail": "Queued"},
+        }
         with self.lock:
             self.jobs[job["id"]] = job
         threading.Thread(target=self._run_job, args=(job["id"],), daemon=True).start()
@@ -302,8 +371,14 @@ class AppState:
     def _run_job(self, job_id: str) -> None:
         with self.lock:
             job = self.jobs[job_id]
+            if job["cancelRequested"] or job["status"] == "cancelled":
+                return
             job["status"] = "running"
-        for command in job["commands"]:
+        for index, command in enumerate(job["commands"]):
+            if self._cancel_requested(job_id):
+                self._finish_job(job_id, "cancelled")
+                return
+            self._set_progress(job_id, index, index / max(1, len(job["commands"])), f"Step {index + 1} of {len(job['commands'])}")
             displayed_command = [project_relative_path(Path(part)) if Path(part).is_absolute() else part for part in command]
             self._append_log(job_id, "$ " + subprocess.list2cmdline(displayed_command))
             try:
@@ -312,13 +387,25 @@ class AppState:
                 self._append_log(job_id, f"Unable to start command: {exc}")
                 self._finish_job(job_id, "failed")
                 return
+            with self.lock:
+                self.processes[job_id] = process
             assert process.stdout is not None
             for line in process.stdout:
                 self._append_log(job_id, line.rstrip())
-            if process.wait() != 0:
+                self._progress_from_output(job_id, index, len(job["commands"]), line)
+            return_code = process.wait()
+            process.stdout.close()
+            with self.lock:
+                self.processes.pop(job_id, None)
+            if self._cancel_requested(job_id):
+                self._append_log(job_id, "Cancellation confirmed; subprocess stopped.")
+                self._finish_job(job_id, "cancelled")
+                return
+            if return_code != 0:
                 self._append_log(job_id, f"Command exited with code {process.returncode}.")
                 self._finish_job(job_id, "failed")
                 return
+            self._set_progress(job_id, index + 1, (index + 1) / max(1, len(job["commands"])), f"Step {index + 1} complete")
         self._finish_job(job_id, "completed")
 
     def _append_log(self, job_id: str, line: str) -> None:
@@ -332,6 +419,41 @@ class AppState:
         with self.lock:
             self.jobs[job_id]["status"] = status
             self.jobs[job_id]["finishedAt"] = iso_now()
+            if status == "completed":
+                self.jobs[job_id]["progress"] = {**self.jobs[job_id]["progress"], "fraction": 1.0, "detail": "Complete"}
+
+    def _set_progress(self, job_id: str, current: int, fraction: float, detail: str) -> None:
+        with self.lock:
+            if job_id in self.jobs:
+                self.jobs[job_id]["progress"] = {"current": current, "total": self.jobs[job_id]["progress"]["total"], "fraction": max(0.0, min(1.0, fraction)), "detail": detail}
+
+    def _progress_from_output(self, job_id: str, index: int, total: int, line: str) -> None:
+        match = re.search(r"(?<!\d)(100|[1-9]?\d)%", line)
+        if match:
+            percent = int(match.group(1)) / 100
+            self._set_progress(job_id, index, (index + percent) / max(1, total), f"Step {index + 1} of {total}: {match.group(1)}%")
+
+    def _cancel_requested(self, job_id: str) -> bool:
+        with self.lock:
+            return bool(self.jobs[job_id]["cancelRequested"])
+
+    def cancel_job(self, job_id: str) -> dict[str, Any]:
+        process: subprocess.Popen[str] | None = None
+        with self.lock:
+            job = self.jobs.get(job_id)
+            if job is None:
+                raise RequestError("Job was not found.")
+            if job["status"] not in {"queued", "running"}:
+                raise RequestError("Only queued or running jobs can be cancelled.")
+            job["cancelRequested"] = True
+            job["progress"] = {**job["progress"], "detail": "Cancelling…"}
+            process = self.processes.get(job_id)
+            if job["status"] == "queued":
+                job["status"] = "cancelled"
+                job["finishedAt"] = iso_now()
+        if process is not None:
+            process.terminate()
+        return dict(job, log=list(job["log"]))
 
     def job_list(self) -> list[dict[str, Any]]:
         with self.lock:
@@ -365,6 +487,8 @@ def create_session(
     default_directory = WEB_ROOT / "human-reviews" / f"human-review-{datetime.now().strftime('%Y%m%dT%H%M%S')}-{uuid4().hex[:6]}"
     directory = as_path(payload.get("reviewRoot") or str(default_directory), label="review output directory", must_exist=False, directory=True)
     require_separate_paths(first=audio_root, second=directory, first_name="audio root", second_name="review output directory")
+    if directory.is_dir() and next(directory.iterdir(), None) is not None:
+        return resume_session(directory, metadata_path, manifest_path, audio_root, rows)
     require_fresh_directory(directory, label="review output directory")
     directory.mkdir(parents=True, exist_ok=True)
     canonical_rows: dict[str, dict[str, Any]] = {}
@@ -396,6 +520,47 @@ def create_session(
         "rows": canonical_rows,
         "lock": threading.Lock(),
         "meta": metadata,
+        "resumed": False,
+    }
+
+
+def resume_session(directory: Path, metadata_path: Path, manifest_path: Path | None, audio_root: Path, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Restore a durable review projection into a new in-memory API session."""
+
+    session_file = directory / "session.json"
+    projection_file = directory / "current-reviews.json"
+    if not session_file.is_file() or not projection_file.is_file():
+        raise RequestError("Review output directory is not empty and does not contain a resumable Daiya review session.")
+    try:
+        metadata = json.loads(session_file.read_text(encoding="utf-8"))
+        persisted_reviews = json.loads(projection_file.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RequestError("Existing review session metadata is not valid JSON.") from exc
+    if not isinstance(metadata, dict) or metadata.get("schema_version") != "daiya-human-review-session-1":
+        raise RequestError("Existing review output directory is not a Daiya human-review session.")
+    if metadata.get("metadata_sha256") != digest(metadata_path):
+        raise RequestError("The selected metadata JSONL does not match the existing review session.")
+    expected_manifest_hash = metadata.get("manifest_sha256")
+    actual_manifest_hash = digest(manifest_path) if manifest_path else None
+    if expected_manifest_hash != actual_manifest_hash:
+        raise RequestError("The selected candidate manifest does not match the existing review session.")
+    if not isinstance(persisted_reviews, dict):
+        raise RequestError("Existing review projection must be a JSON object.")
+    canonical_rows = {str(row["id"]): dict(row) for row in rows}
+    restored_reviews = {
+        row_id: event
+        for row_id, event in persisted_reviews.items()
+        if row_id in canonical_rows and isinstance(event, dict) and isinstance(event.get("human"), dict)
+    }
+    return {
+        "id": uuid4().hex,
+        "directory": str(directory),
+        "reviewer": str(metadata.get("reviewer") or os.getenv("USERNAME") or "local-reviewer"),
+        "reviews": restored_reviews,
+        "rows": canonical_rows,
+        "lock": threading.Lock(),
+        "meta": metadata,
+        "resumed": True,
     }
 
 
@@ -597,6 +762,13 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == "/api/jobs/validate":
                 name, commands, outputs = build_validation_job(payload)
                 self.send_json(HTTPStatus.ACCEPTED, {"job": STATE.add_job(name, commands, outputs)})
+            elif self.path.startswith("/api/jobs/") and self.path.endswith("/cancel"):
+                job_id = self.path.removeprefix("/api/jobs/").removesuffix("/cancel").strip("/")
+                self.send_json(HTTPStatus.OK, {"job": STATE.cancel_job(job_id)})
+            elif self.path == "/api/path/validate":
+                self.send_json(HTTPStatus.OK, validate_ui_path(payload))
+            elif self.path == "/api/path/pick":
+                self.send_json(HTTPStatus.OK, pick_ui_path(payload))
             elif self.path == "/api/dataset/load":
                 metadata = as_path(payload.get("metadataPath"), label="metadata JSONL", directory=False)
                 manifest = as_path(payload["manifestPath"], label="candidate manifest", directory=False) if payload.get("manifestPath") else None
@@ -606,7 +778,8 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.add_session(session, audio_root)
                 public_session = {key: value for key, value in session.items() if key not in {"reviews", "rows", "lock"}}
                 public_session["directory"] = project_relative_path(Path(session["directory"]))
-                self.send_json(HTTPStatus.OK, {"rows": rows, "session": public_session})
+                reviews = {row_id: event["human"] for row_id, event in session["reviews"].items() if isinstance(event, dict) and isinstance(event.get("human"), dict)}
+                self.send_json(HTTPStatus.OK, {"rows": rows, "session": public_session, "reviews": reviews})
             elif self.path == "/api/review/save":
                 session_id = str(payload.get("sessionId") or "")
                 session = STATE.get_session(session_id)

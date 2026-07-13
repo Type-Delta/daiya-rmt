@@ -34,6 +34,8 @@ code { font-family: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, m
 .topbar { min-height: 58px; display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 10px 20px; border-bottom: 1px solid var(--edge); background: color-mix(in oklch, var(--bg) 92%, var(--surface)); position: sticky; top: 0; z-index: 10; }
 .brand { display: flex; align-items: center; gap: 8px; letter-spacing: -.01em; font-size: 14px; }
 .brand strong { font-weight: 650; }
+.brand-link { appearance: none; border: 0; padding: 0; background: transparent; color: var(--ink); font: inherit; font-weight: 650; text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px; }
+.brand-link:hover { color: var(--primary); text-decoration-color: currentColor; }
 .brand-mark { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 6px; background: var(--primary); color: var(--primary-ink); font-weight: 850; font-size: 17px; }
 .brand-divider { color: var(--faint); }
 .topbar-actions { display: flex; gap: 9px; align-items: center; }
@@ -47,6 +49,8 @@ code { font-family: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, m
 .button--primary:hover:not(:disabled) { background: color-mix(in oklch, var(--primary) 86%, white); }
 .button--secondary { background: var(--raised); color: var(--ink); }
 .button--secondary:hover:not(:disabled), .icon-button:hover:not(:disabled) { background: color-mix(in oklch, var(--raised) 75%, var(--edge)); }
+.button--danger { background: color-mix(in oklch, var(--danger) 85%, var(--raised)); color: var(--ink); }
+.button--danger:hover:not(:disabled) { background: var(--danger); color: white; }
 .icon-button { display: inline-grid; place-items: center; width: 34px; padding: 0; background: transparent; border-radius: 6px; color: var(--muted); }
 .text-button { color: var(--primary); background: transparent; font-size: 12px; padding: 3px; text-decoration: underline; text-underline-offset: 3px; }
 
@@ -70,6 +74,13 @@ code { font-family: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, m
 .field { display: grid; gap: 5px; min-width: 0; color: var(--muted); font-size: 11px; font-weight: 650; }
 .field input { width: 100%; min-width: 0; height: 34px; border: 1px solid var(--edge); border-radius: 6px; background: var(--bg); color: var(--ink); padding: 7px 9px; font-size: 12px; font-weight: 400; }
 .field input::placeholder { color: color-mix(in oklch, var(--muted) 75%, var(--bg)); }
+.field-control { display: flex; min-width: 0; }
+.field-control input { border-radius: 6px 0 0 6px; }
+.field-control input.is-invalid { border-color: var(--danger); }
+.picker-button { flex: 0 0 34px; width: 34px; border: 1px solid var(--edge); border-left: 0; border-radius: 0 6px 6px 0; background: var(--raised); color: var(--muted); display: grid; place-items: center; }
+.picker-button:hover:not(:disabled) { color: var(--primary); background: color-mix(in oklch, var(--raised) 75%, var(--edge)); }
+.path-state { color: var(--ok); font-size: 10px; font-weight: 500; line-height: 1.25; }
+.path-state.is-invalid { color: var(--danger); }
 .fields { display: grid; gap: 9px; }
 .fields--two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .check { color: var(--muted); font-size: 12px; display: flex; gap: 7px; align-items: center; }
@@ -87,6 +98,11 @@ details .field { margin-top: 10px; }
 .job summary::-webkit-details-marker { display: none; }
 .job summary > span { display: inline-flex; align-items: center; gap: 8px; }
 .job-body { padding: 0 10px 10px; }
+.job-progress { display: grid; gap: 5px; margin: 1px 0 10px; }
+.job-progress-track { height: 5px; overflow: hidden; border-radius: 4px; background: var(--bg); }
+.job-progress-track span { display: block; height: 100%; min-width: 0; border-radius: inherit; background: var(--primary); transition: width 200ms ease-out; }
+.job-progress-track span.is-indeterminate { animation: progress-scan 1.2s ease-in-out infinite; }
+.job-progress small { color: var(--muted); font-size: 10px; }
 .job-body > code { display: block; max-height: 160px; overflow: auto; white-space: pre-wrap; padding: 9px; border-radius: 6px; background: var(--bg); color: var(--muted); font-size: 11px; line-height: 1.45; }
 .job-body p { display: grid; grid-template-columns: 125px 1fr; gap: 10px; margin: 8px 0 0; color: var(--muted); font-size: 11px; }
 .job-body p span { overflow-wrap: anywhere; }
@@ -97,6 +113,7 @@ details .field { margin-top: 10px; }
 .status--queued span { background: var(--accent); }
 .status--completed span { background: var(--ok); }
 .status--failed span { background: var(--danger); }
+.status--cancelled span { background: var(--faint); }
 
 .empty-state { min-height: calc(100vh - 58px); display: grid; place-content: center; justify-items: center; gap: 12px; padding: 24px; text-align: center; }
 .empty-state svg { color: var(--primary); }
@@ -177,6 +194,7 @@ details .field { margin-top: 10px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 @keyframes pulse { 50% { opacity: .35; } }
+@keyframes progress-scan { 50% { transform: translateX(400%); } }
 @media (max-width: 1120px) { .setup-grid { grid-template-columns: 1fr 1fr; } .setup-panel--load { grid-column: span 2; } .editor-layout { grid-template-columns: 1fr; } .evidence { display: grid; grid-template-columns: 1fr 1fr; } .evidence-heading, .provenance { grid-column: 1 / -1; } .evidence dl { padding-top: 0; } }
 @media (max-width: 780px) { .topbar { padding: 10px 14px; } .session-status { display: none; } .setup { padding: 28px 14px 18px; } .setup h1 { font-size: 24px; } .setup-grid { grid-template-columns: 1fr; } .setup-panel--load { grid-column: auto; } .workbench { display: block; } .queue { position: static; max-height: none; border-right: 0; border-bottom: 1px solid var(--edge); } .clip-list { display: flex; gap: 7px; overflow-x: auto; overflow-y: hidden; padding: 7px 14px 11px; } .clip { flex: 0 0 235px; min-height: 100px; } .editor { padding: 18px 14px 28px; } .editor-layout { gap: 16px; } .audio-strip { align-items: stretch; flex-direction: column; } .audio-strip audio { min-width: 0; width: 100%; } .evidence { grid-template-columns: 1fr; } .evidence-heading, .provenance { grid-column: auto; } }
 @media (max-width: 480px) { .topbar-actions .button { font-size: 12px; padding: 7px 9px; } .fields--two { grid-template-columns: 1fr; } .editor-top { gap: 10px; } .editor-actions { flex-wrap: wrap; } .editor-actions > span { order: 3; width: 100%; } .context-line > span:not(.disposition) { border-left: 0; padding-left: 0; } }
