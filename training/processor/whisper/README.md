@@ -14,6 +14,12 @@ Edit `.env`, especially `DAIYA_INPUT_DIR`, `DAIYA_OUTPUT_DIR`, `OPENROUTER_API_K
 
 Set `DAIYA_LLM_CONTEXT_MAX_CHARS` to control how much source-file-specific transcription context is carried into later chunks. Context is built independently for each source file and is not shared across recordings.
 
+Concurrency is deliberately bounded and synchronous. FFmpeg normalization uses `DAIYA_FFMPEG_MAX_WORKERS` and `DAIYA_FFMPEG_MAX_IN_FLIGHT` (defaults: 4/4); LLM source-file jobs use `DAIYA_LLM_MAX_WORKERS` and `DAIYA_LLM_MAX_IN_FLIGHT` (2/2); and dataset audio copies use `DAIYA_EXPORT_MAX_WORKERS` and `DAIYA_EXPORT_MAX_IN_FLIGHT` (4/4). Results and metadata rows are emitted in deterministic source/chunk order even when work completes out of order. Temporary media files are created beside their destinations and published atomically; failed runs remove the complete private staging tree.
+
+`DAIYA_OUTPUT_DIR` must name a fresh directory that does not already exist. The exporter builds a unique sibling staging directory, takes a cross-process publication lock, and atomically publishes the completed dataset. Existing output is never reused or overwritten, and a failed multi-item export leaves the previous publication untouched.
+
+GPU inference is sequential by design: Silero VAD and the pyannote overlap detector run one audio file at a time in the pipeline loop. The worker settings above do not parallelize or make those GPU clients asynchronous. The LLM client remains the synchronous OpenAI client, called from bounded worker threads only for independent source files; chunks within one source retain sequential context.
+
 FFmpeg must be available on `PATH`, or set `DAIYA_FFMPEG_BIN`.
 
 This project pins CUDA PyTorch wheels through the `pytorch-cu128` uv index. If your driver cannot run CUDA 12.8 wheels, change the `[[tool.uv.index]]` URL in `pyproject.toml` to the matching PyTorch wheel index before running `uv sync`.

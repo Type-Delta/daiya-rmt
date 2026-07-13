@@ -16,7 +16,10 @@ from .vad import SileroVad
 
 def run_pipeline(config: PipelineConfig) -> None:
     console = Console()
-    ensure_dirs([config.work_dir, config.output_dir])
+    # The exporter requires the publication target itself to be fresh.  Create
+    # only its parent here; export_audiofolder publishes the finished dataset
+    # directory atomically at the end.
+    ensure_dirs([config.work_dir, config.output_dir.parent])
 
     files = config.find_audio_files()
     if not files:

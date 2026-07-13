@@ -1,0 +1,6 @@
+{
+  "files": ["training/processor/whisper/web/index.html"],
+  "insertBefore": "</body>",
+  "commentSyntax": "html",
+  "cspChecked": true
+}

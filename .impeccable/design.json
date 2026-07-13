@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-13T00:00:00+07:00",
+  "title": "Design System: Daiya Research Workbench",
+  "extensions": {
+    "colorMeta": {
+      "bg": { "role": "neutral", "displayName": "Listening field", "canonical": "oklch(0.16 0.008 110)", "tonalRamp": ["oklch(0.16 0.008 110)", "oklch(0.205 0.01 110)", "oklch(0.25 0.012 110)"] },
+      "primary": { "role": "primary", "displayName": "Signal chartreuse", "canonical": "oklch(0.8 0.15 115)", "tonalRamp": ["oklch(0.58 0.11 115)", "oklch(0.8 0.15 115)", "oklch(0.9 0.1 115)"] }
+    },
+    "shadows": [
+      { "name": "overlay", "value": "0 8px 8px rgb(0 0 0 / 0.18)", "purpose": "Use only for an overlay escaping a scroll region." }
+    ],
+    "motion": [
+      { "name": "state", "value": "150ms cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Selection, save, and control state changes." }
+    ],
+    "breakpoints": [
+      { "name": "compact", "value": "900px" },
+      { "name": "phone", "value": "640px" }
+    ]
+  },
+  "components": [],
+  "narrative": {
+    "northStar": "The Listening Bench",
+    "overview": "A calm, accountable research workbench where the chunk, its audio, and evidence take priority over interface chrome.",
+    "keyCharacteristics": ["Tonal depth", "Mixed-script clarity", "Explicit audit state"],
+    "rules": [{ "name": "Signal Rule", "body": "The chartreuse primary marks action and current state, not decoration.", "section": "colors" }],
+    "dos": ["Do keep the work item central.", "Do make review provenance visible."],
+    "donts": ["Don't use marketing chrome.", "Don't present human edits as source overwrites."]
+  }
+}

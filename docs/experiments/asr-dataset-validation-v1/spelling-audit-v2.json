@@ -1,0 +1,80 @@
+{
+  "schema_version": "spelling-audit-summary-1",
+  "date": "2026-07-12",
+  "dataset": {
+    "records": 7091,
+    "metadata_sha256": "9d56736b055df552fa20b325fce0720b87d4bd29f0b166fd4d1197d87874a028"
+  },
+  "configuration": {
+    "thai_checker": "pythainlp-5.3.4-pn",
+    "english_checker": "symspellpy-6.10.0-packaged-frequency-dictionary",
+    "japanese_checker": null,
+    "allowlist": null,
+    "review_threshold_per_language": 0.2,
+    "minimum_issues": 1,
+    "raw_issue_text_included": false
+  },
+  "runtime": {
+    "cached_full_pass_seconds": 1571.67,
+    "note": "The initial uncached pass was stopped after approximately one hour without completing; token-result caching preserves checker semantics."
+  },
+  "spelling": {
+    "rows_with_any_issue": 5034,
+    "rows_review_recommended": 2281,
+    "languages": {
+      "thai": {
+        "rows_checked": 7025,
+        "checked_units": 107685,
+        "suspicious_units": 14349,
+        "rows_with_issues": 4990,
+        "rows_ratio_at_least_0_2": 2099,
+        "rows_ratio_at_least_0_5": 282
+      },
+      "english": {
+        "rows_checked": 1547,
+        "checked_units": 3404,
+        "suspicious_units": 359,
+        "rows_with_issues": 260,
+        "rows_ratio_at_least_0_2": 243,
+        "rows_ratio_at_least_0_5": 179
+      },
+      "japanese": {
+        "rows_checked": 0,
+        "checked_units": 0,
+        "suspicious_units": 0,
+        "rows_with_issues": 0
+      }
+    }
+  },
+  "baseline_manifest": {
+    "keep": 6650,
+    "review": 256,
+    "drop": 92,
+    "correct": 93
+  },
+  "spelling_manifest": {
+    "keep": 4475,
+    "review": 2453,
+    "drop": 92,
+    "correct": 71,
+    "transitions": {
+      "keep_to_review": 2175,
+      "keep_to_keep": 4475,
+      "review_to_review": 256,
+      "drop_to_drop": 92,
+      "correct_to_correct": 71,
+      "correct_to_review": 22
+    },
+    "spelling_suspect_dispositions": {
+      "review": 2266,
+      "drop": 15,
+      "correct": 0
+    }
+  },
+  "artifact_sha256": {
+    "spelling_jsonl": "c70a5a77e17d6e61b2d9f039a2168739a27edd4833db88dabc61c5dda727805f",
+    "manifest_jsonl": "313f58cc5347a5a213e2adb124378fb324ebbf117e9a8b5331e067db1f8cdbb1",
+    "baseline_manifest_jsonl": "412768e379888967da6f3ba8a642aec4fc9096a0a6b968f65067b1cbea8aebfd"
+  },
+  "interpretation": "Uncalibrated review-prioritization evidence only; not a production-clean dataset and not evidence for automatic label replacement or deletion."
+}

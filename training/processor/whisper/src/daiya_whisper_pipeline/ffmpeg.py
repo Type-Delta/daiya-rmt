@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha1
+import os
 from pathlib import Path
 import subprocess
+import tempfile
 
 from tqdm import tqdm
 
+from .concurrency import bounded_ordered_map
 from .config import PipelineConfig, ensure_dirs
 from .types import Chunk, NormalizedAudio
 
@@ -16,13 +19,33 @@ def _source_id(path: Path) -> str:
     return f"{path.stem}_{digest}"
 
 
+def _destination_temp_path(destination: Path) -> Path:
+    fd, temporary = tempfile.mkstemp(
+        prefix=f".{destination.name}.",
+        # FFmpeg chooses the muxer from the output suffix unless an explicit
+        # ``-f`` is supplied.  Keep the temporary output a WAV as well as the
+        # final destination so atomic publication cannot change the format.
+        suffix=".wav",
+        dir=destination.parent,
+    )
+    os.close(fd)
+    return Path(temporary)
+
+
+def _run_ffmpeg_atomic(command: list[str], destination: Path) -> None:
+    temporary = _destination_temp_path(destination)
+    try:
+        subprocess.run([*command, str(temporary)], check=True)
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def normalize_audio_file(path: Path, config: PipelineConfig) -> NormalizedAudio:
     out_dir = config.work_dir / "normalized"
     ensure_dirs([out_dir])
     source_id = _source_id(path)
     output = out_dir / f"{source_id}.wav"
-    if output.exists():
-        return NormalizedAudio(source_path=path, normalized_path=output, source_id=source_id)
 
     cmd = [
         config.ffmpeg_bin,
@@ -39,9 +62,8 @@ def normalize_audio_file(path: Path, config: PipelineConfig) -> NormalizedAudio:
         str(config.sample_rate),
         "-c:a",
         config.audio_codec,
-        str(output),
     ]
-    subprocess.run(cmd, check=True)
+    _run_ffmpeg_atomic(cmd, output)
     return NormalizedAudio(source_path=path, normalized_path=output, source_id=source_id)
 
 
@@ -49,18 +71,24 @@ def normalize_audio_files(paths: list[Path], config: PipelineConfig) -> list[Nor
     if not paths:
         return []
 
+    ordered_paths = sorted(paths, key=lambda path: str(path))
     normalized: list[NormalizedAudio] = []
-    with ThreadPoolExecutor(max_workers=config.ffmpeg_max_workers) as executor:
-        futures = [executor.submit(normalize_audio_file, path, config) for path in paths]
-        for future in tqdm(as_completed(futures), total=len(futures), desc="ffmpeg normalize"):
-            normalized.append(future.result())
-    return sorted(normalized, key=lambda item: str(item.source_path))
+    max_in_flight = config.ffmpeg_max_in_flight
+    max_workers = min(config.ffmpeg_max_workers, max_in_flight)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        results = bounded_ordered_map(
+            executor,
+            lambda path: normalize_audio_file(path, config),
+            ordered_paths,
+            max_in_flight,
+        )
+        for item in tqdm(results, total=len(ordered_paths), desc="ffmpeg normalize"):
+            normalized.append(item)
+    return normalized
 
 
 def export_chunk(chunk: Chunk, config: PipelineConfig) -> None:
     chunk.chunk_path.parent.mkdir(parents=True, exist_ok=True)
-    if chunk.chunk_path.exists():
-        return
 
     filters: list[str] = []
     labels: list[str] = []
@@ -97,6 +125,5 @@ def export_chunk(chunk: Chunk, config: PipelineConfig) -> None:
         str(config.sample_rate),
         "-c:a",
         config.audio_codec,
-        str(chunk.chunk_path),
     ]
-    subprocess.run(cmd, check=True)
+    _run_ffmpeg_atomic(cmd, chunk.chunk_path)
