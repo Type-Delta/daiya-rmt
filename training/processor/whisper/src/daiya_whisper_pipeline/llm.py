@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 import base64
@@ -11,6 +11,7 @@ import json
 from openai import OpenAI
 from tqdm import tqdm
 
+from .concurrency import bounded_ordered_map
 from .config import PipelineConfig
 from .types import Chunk, LabeledChunk
 
@@ -193,13 +194,21 @@ def transcribe_chunks(
     for chunk in chunks:
         by_source[str(chunk.source.source_path)].append(chunk)
 
+    source_groups = [
+        (source_path, sorted(source_chunks, key=lambda item: item.index))
+        for source_path, source_chunks in sorted(by_source.items())
+    ]
     labeled: list[LabeledChunk] = []
-    with ThreadPoolExecutor(max_workers=config.llm_max_workers) as executor:
+    max_in_flight = config.llm_max_in_flight
+    max_workers = min(config.llm_max_workers, max_in_flight)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
         with tqdm(total=len(chunks), desc="llm transcribe chunks") as progress:
-            futures = [
-                executor.submit(_transcribe_source_chunks, source_chunks, transcriber, config, progress.update)
-                for source_chunks in by_source.values()
-            ]
-            for future in as_completed(futures):
-                labeled.extend(future.result())
-    return sorted(labeled, key=lambda item: (str(item.chunk.source.source_path), item.chunk.index))
+            results = bounded_ordered_map(
+                executor,
+                lambda group: _transcribe_source_chunks(group[1], transcriber, config, progress.update),
+                source_groups,
+                max_in_flight,
+            )
+            for source_labeled in results:
+                labeled.extend(source_labeled)
+    return labeled

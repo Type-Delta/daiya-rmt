@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "audit_date": "2026-07-12",
+  "identity_algorithm": "sha256-wav-container-bytes",
+  "canonical": {
+    "records": 7091,
+    "audio_files": 7091,
+    "unique_audio_hashes": 7002,
+    "speech_seconds": 31284.5436875,
+    "sources": 11,
+    "duplicate_pair_groups": 89,
+    "duplicate_text_conflict_groups": 40,
+    "duplicate_text_or_language_conflict_groups": 42,
+    "empty_texts": 10,
+    "texts_over_500_chars": 9,
+    "records_over_100_chars_per_second": 10,
+    "language_value_count": 11
+  },
+  "protected_gold": {
+    "audio_files": 109,
+    "unique_audio_hashes": 109,
+    "speech_seconds": 451.159,
+    "exact_training_overlap": 82,
+    "unmatched_by_exact_bytes": 27,
+    "overlap_hash_set_digest": "86063855d957897a0b4d40484cb0f2e1aac0898025b85c99ed3497fb93cb5456"
+  },
+  "privacy": "aggregate counts only; no audio, labels, predictions, paths, or per-clip hashes"
+}
