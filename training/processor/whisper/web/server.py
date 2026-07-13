@@ -401,7 +401,7 @@ def build_auto_label_job(payload: dict[str, Any]) -> tuple[str, list[list[str]],
     require_separate_paths(first=output_dir, second=work_dir, first_name="dataset output directory", second_name="pipeline work directory")
     require_absent_directory(output_dir, label="dataset output directory")
     require_fresh_directory(work_dir, label="pipeline work directory")
-    command = ["uv", "run", "--no-project", "--with-editable", str(WHISPER_ROOT), "daiya-audio-label", "--input-dir", str(input_dir), "--output-dir", str(output_dir), "--work-dir", str(work_dir)]
+    command = ["uv", "run", "--no-project", "--with-editable", str(WHISPER_ROOT), "auto-label", "--input-dir", str(input_dir), "--output-dir", str(output_dir), "--work-dir", str(work_dir)]
     if bool(payload.get("noOverlapFilter")):
         command.append("--no-overlap-filter")
     return "Auto-label audio", [command], {"metadataPath": str(output_dir / "metadata.jsonl"), "audioRoot": str(output_dir)}

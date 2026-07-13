@@ -11,15 +11,15 @@ WEB_DIR = Path(__file__).resolve().parents[2] / "web"
 
 def build_parser() -> argparse.ArgumentParser:
    parser = argparse.ArgumentParser(
-      prog="daiya-web",
-      description="Run Daiya web package scripts from the repo root.",
+      prog="daiya-wpl-web",
+      description="Run Daiya Whisper Pipeline web scripts from the repo root.",
    )
    parser.add_argument(
       "script",
       choices=("build", "dev", "preview", "install", "i"),
       nargs="?",
       default="build",
-      help="npm script to run in daiya/web. Defaults to build.",
+      help="npm script to run in training/processor/whisper/web. Defaults to build.",
    )
    parser.add_argument(
       "args",
@@ -37,8 +37,7 @@ def run_npm_script(script: str, extra_args: list[str] | None = None) -> int:
    if not WEB_DIR.exists():
       raise SystemExit(f"web directory does not exist: {WEB_DIR}")
 
-   command = [npm, "run", script] if script not in ("install", "i") else [
-       npm, script]
+   command = [npm, "run", script] if script not in ("install", "i") else [npm, script]
    if extra_args:
       command.extend(["--", *extra_args])
    return subprocess.run(command, cwd=WEB_DIR).returncode

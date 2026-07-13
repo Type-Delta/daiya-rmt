@@ -20,9 +20,8 @@ dependencies = [
 ]
 
 [project.scripts]
-daiya-audio-label = "daiya_whisper_pipeline.cli:main"
-daiya-whisper-clean = "daiya_whisper_pipeline.cli:main"
-start = "daiya_whisper_pipeline.cli:main"
+auto-label = "daiya_whisper_pipeline.cli:main"
+web = "daiya_whisper_pipeline.web:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -3,3 +3,5 @@ dist/
 human-reviews/
 __pycache__/
 *.py[cod]
+
+package-lock.json

@@ -72,7 +72,7 @@ The M2 run was launched by `training/whisper/runs/launch_m2.cmd`.
 ```powershell
 cd training\processor\whisper
 set DAIYA_OPENROUTER_MODEL=google/gemini-3.1-flash-lite
-uv run daiya-audio-label `
+uv run auto-label `
   --input-dir C:\JokaMain\ProjectShowRoom\daiya-rmt\training\dataset\raw\whisper `
   --output-dir C:\JokaMain\ProjectShowRoom\daiya-rmt\training\dataset\hf_datasets\whisper-m2
 ```

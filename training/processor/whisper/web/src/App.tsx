@@ -186,7 +186,7 @@ function App() {
         <div className="setup-intro"><span className="eyebrow">Local workflow</span><h1>Label with context, keep the source intact.</h1><p>Run the existing pipeline and validator, then open their JSONL outputs for human review. Every save is an append-only event in a new review session.</p></div>
         <div className="setup-grid">
           <form className="setup-panel" onSubmit={(event) => { event.preventDefault(); void runAuto(); }}>
-            <div className="panel-heading"><span className="panel-icon"><Sparkle size={18} /></span><div><h2>1. Auto-label audio</h2><p>Runs <code>daiya-audio-label</code> in the Whisper processor.</p></div></div>
+            <div className="panel-heading"><span className="panel-icon"><Sparkle size={18} /></span><div><h2>1. Auto-label audio</h2><p>Runs <code>auto-label</code> in the Whisper processor.</p></div></div>
             <PathField label="Input audio directory" value={auto.inputDir} onChange={(inputDir) => setAuto({ ...auto, inputDir })} placeholder="C:\datasets\raw" />
             <PathField label="New dataset output directory" value={auto.outputDir} onChange={(outputDir) => setAuto({ ...auto, outputDir })} placeholder="C:\datasets\labeled" />
             <PathField label="New pipeline work directory" value={auto.workDir} onChange={(workDir) => setAuto({ ...auto, workDir })} placeholder="C:\datasets\work" />

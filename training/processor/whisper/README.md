@@ -29,13 +29,13 @@ This project pins CUDA PyTorch wheels through the `pytorch-cu128` uv index. If y
 ## Run
 
 ```powershell
-uv run daiya-audio-label
+uv run auto-label
 ```
 
 You can override paths at runtime:
 
 ```powershell
-uv run daiya-audio-label --input-dir C:\datasets\raw --output-dir C:\datasets\daiya_hf
+uv run auto-label --input-dir C:\datasets\raw --output-dir C:\datasets\daiya_hf
 ```
 
 ## Output

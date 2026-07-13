@@ -37,8 +37,7 @@ Python entry points:
 | `daiya` | `daiya` | Offline audio replay through the v0 transcription pipeline. |
 | `daiya-whisper-lora` | `daiya-whisper-lora` | Inspect/train/merge Whisper LoRA models. |
 | `start` | `daiya-whisper-lora` | Alias for `daiya-whisper-lora`. |
-| `daiya-audio-label` | `whisper-dataset-pipeline` | Label raw audio and export a Whisper training dataset. |
-| `daiya-whisper-clean` | `whisper-dataset-pipeline` | Alias to the dataset pipeline CLI. |
+| `auto-label` | `whisper-dataset-pipeline` | Label raw audio and export a Whisper training dataset. |
 | `start` | `whisper-dataset-pipeline` | Alias to the dataset pipeline CLI. |
 | `demo` | `statefull-diarization` | Stateful diarization lab demo. |
 
@@ -187,13 +186,13 @@ training\whisper\runs\medium-real-iter4-ct2-int8_float16\model.bin
 The dataset processor converts raw audio into a Hugging Face `audiofolder` dataset for Whisper training.
 
 ```powershell
-uv run --package whisper-dataset-pipeline daiya-audio-label
+uv run --package whisper-dataset-pipeline auto-label
 ```
 
 Override paths:
 
 ```powershell
-uv run --package whisper-dataset-pipeline daiya-audio-label `
+uv run --package whisper-dataset-pipeline auto-label `
   --input-dir C:\datasets\raw `
   --output-dir C:\datasets\daiya_hf
 ```

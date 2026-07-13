@@ -28,7 +28,7 @@ member cannot prevent the local tools from running. The server uses the same
 isolated project invocation.
 
 ```powershell
-uv run --no-project --with-editable training/processor/whisper daiya-audio-label --help
+uv run --no-project --with-editable training/processor/whisper auto-label --help
 uv run --no-project --with-editable "training/processor/whisper/dataset-validation[spelling]" python -c "import daiya_dataset_validation"
 ```
 
@@ -82,7 +82,7 @@ python server.py
    must also be separate from each other. The server runs:
 
    ```text
-   uv run --no-project --with-editable training/processor/whisper daiya-audio-label --input-dir … --output-dir … --work-dir …
+   uv run --no-project --with-editable training/processor/whisper auto-label --input-dir … --output-dir … --work-dir …
    ```
 
 2. In **Validate with spellcheck**, use the resulting `metadata.jsonl` and its
