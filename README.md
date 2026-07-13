@@ -16,7 +16,7 @@ The project uses a root `uv` workspace. Run commands from the repository root un
 ## Setup
 
 ```powershell
-uv sync
+uv sync --all-packages
 ```
 
 For frontend work:

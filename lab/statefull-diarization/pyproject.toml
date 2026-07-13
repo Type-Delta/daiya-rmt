@@ -22,7 +22,7 @@ demo = "statefull_diarization.demo:main"
 package = false
 
 [tool.uv.sources]
-pyannote-audio = { path = "../pyannote", editable = true }
+# pyannote-audio = { path = "../pyannote", editable = true }
 torch = { index = "pytorch-cu128" }
 torchaudio = { index = "pytorch-cu128" }
 
