@@ -1,4 +1,12 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   ArrowClockwiseIcon,
@@ -59,6 +67,62 @@ interface SavedSetup {
   validation: ValidationSetup;
   load: ReviewSetup;
 }
+
+interface AppState {
+  page: Page;
+  rows: LabelRow[];
+  session: Session | null;
+  reviews: Record<string, ReviewState>;
+  selectedId: string | null;
+  draft: string;
+  filter: Filter;
+  query: string;
+  jobs: Job[];
+  busy: string | null;
+  notice: string | null;
+  error: string | null;
+  configured: boolean;
+  auto: AutoSetup;
+  validation: ValidationSetup;
+  load: ReviewSetup;
+}
+
+type AppAction =
+  | { type: "pageChanged"; page: Page }
+  | { type: "jobsRefreshed"; jobs: Job[] }
+  | {
+      type: "initialised";
+      jobs: Job[];
+      auto?: AutoSetup;
+      validation?: ValidationSetup;
+      load?: ReviewSetup;
+      notice: string;
+    }
+  | { type: "autoChanged"; auto: AutoSetup }
+  | { type: "validationChanged"; validation: ValidationSetup }
+  | { type: "loadChanged"; load: ReviewSetup }
+  | { type: "operationStarted"; operation: string }
+  | { type: "operationFinished" }
+  | { type: "errorSet"; error: string }
+  | { type: "messageDismissed" }
+  | { type: "autoStarted"; job: Job }
+  | { type: "validationStarted"; job: Job }
+  | { type: "jobCancelled"; job: Job; notice: string }
+  | {
+      type: "datasetLoaded";
+      rows: LabelRow[];
+      session: Session;
+      reviews: Record<string, ReviewState>;
+      load: ReviewSetup;
+      notice: string;
+    }
+  | { type: "selectionChanged"; selectedId: string | null }
+  | { type: "draftChanged"; draft: string }
+  | { type: "filterChanged"; filter: Filter }
+  | { type: "queryChanged"; query: string }
+  | { type: "filtersCleared" }
+  | { type: "reviewSaved"; rowId: string; review: ReviewState; notice: string }
+  | { type: "jobOutputsUsed"; outputs: Job["outputs"] };
 
 const SETUP_STORAGE_KEY = "daiya-labeling-setup-v1";
 const ACTIVE_REVIEW_STORAGE_KEY = "daiya-labeling-active-review-v1";
@@ -125,6 +189,140 @@ function savedActiveReview(): ReviewSetup | null {
 const INITIAL_SETUP = typeof window === "undefined" ? null : savedSetup();
 const INITIAL_ACTIVE_REVIEW =
   typeof window === "undefined" ? null : savedActiveReview();
+
+function initialAppState(): AppState {
+  return {
+    page: window.location.pathname === "/workbench" ? "workbench" : "configure",
+    rows: [],
+    session: null,
+    reviews: {},
+    selectedId: null,
+    draft: "",
+    filter: "all",
+    query: "",
+    jobs: [],
+    busy: null,
+    notice: null,
+    error: null,
+    configured: false,
+    auto: INITIAL_SETUP?.auto ?? EMPTY_AUTO,
+    validation: INITIAL_SETUP?.validation ?? EMPTY_VALIDATION,
+    load: INITIAL_SETUP?.load ?? EMPTY_REVIEW,
+  };
+}
+
+function appReducer(state: AppState, action: AppAction): AppState {
+  switch (action.type) {
+    case "pageChanged":
+      return { ...state, page: action.page };
+    case "jobsRefreshed":
+      return { ...state, jobs: action.jobs };
+    case "initialised":
+      return {
+        ...state,
+        auto: action.auto ?? state.auto,
+        validation: action.validation ?? state.validation,
+        load: action.load ?? state.load,
+        jobs: action.jobs,
+        configured: true,
+        notice: action.notice,
+      };
+    case "autoChanged":
+      return { ...state, auto: action.auto };
+    case "validationChanged":
+      return { ...state, validation: action.validation };
+    case "loadChanged":
+      return { ...state, load: action.load };
+    case "operationStarted":
+      return { ...state, busy: action.operation, error: null };
+    case "operationFinished":
+      return { ...state, busy: null };
+    case "errorSet":
+      return { ...state, error: action.error };
+    case "messageDismissed":
+      return { ...state, notice: null, error: null };
+    case "autoStarted":
+      return {
+        ...state,
+        jobs: [action.job, ...state.jobs],
+        validation: {
+          ...state.validation,
+          metadataPath: action.job.outputs.metadataPath,
+          audioRoot: action.job.outputs.audioRoot,
+        },
+        load: {
+          ...state.load,
+          metadataPath: action.job.outputs.metadataPath,
+          audioRoot: action.job.outputs.audioRoot,
+        },
+        notice: "Auto-labeling started. Its output paths are ready for validation.",
+      };
+    case "validationStarted":
+      return {
+        ...state,
+        jobs: [action.job, ...state.jobs],
+        load: {
+          ...state.load,
+          metadataPath: action.job.outputs.metadataPath,
+          manifestPath: action.job.outputs.manifestPath,
+          audioRoot: action.job.outputs.audioRoot,
+        },
+        notice:
+          "Validation started. Its candidate manifest is ready for the review queue.",
+      };
+    case "jobCancelled":
+      return {
+        ...state,
+        jobs: state.jobs.map((job) =>
+          job.id === action.job.id ? action.job : job,
+        ),
+        notice: action.notice,
+      };
+    case "datasetLoaded":
+      return {
+        ...state,
+        page: "workbench",
+        rows: action.rows,
+        session: action.session,
+        reviews: action.reviews,
+        selectedId: action.rows[0]?.id ?? null,
+        load: action.load,
+        notice: action.notice,
+      };
+    case "selectionChanged":
+      return { ...state, selectedId: action.selectedId };
+    case "draftChanged":
+      return { ...state, draft: action.draft };
+    case "filterChanged":
+      return { ...state, filter: action.filter };
+    case "queryChanged":
+      return { ...state, query: action.query };
+    case "filtersCleared":
+      return { ...state, filter: "all", query: "" };
+    case "reviewSaved":
+      return {
+        ...state,
+        reviews: { ...state.reviews, [action.rowId]: action.review },
+        notice: action.notice,
+      };
+    case "jobOutputsUsed":
+      return {
+        ...state,
+        validation: {
+          ...state.validation,
+          metadataPath:
+            action.outputs.metadataPath ?? state.validation.metadataPath,
+          audioRoot: action.outputs.audioRoot ?? state.validation.audioRoot,
+        },
+        load: {
+          ...state.load,
+          metadataPath: action.outputs.metadataPath ?? state.load.metadataPath,
+          manifestPath: action.outputs.manifestPath ?? state.load.manifestPath,
+          audioRoot: action.outputs.audioRoot ?? state.load.audioRoot,
+        },
+      };
+  }
+}
 
 function formatDuration(value: number | null): string {
   if (typeof value !== "number" || !Number.isFinite(value))
@@ -314,6 +512,7 @@ const ClipQueue = memo(function ClipQueue({
           className="icon-button"
           type="button"
           onClick={onClearFilters}
+          aria-label="Clear filters"
           title="Clear filters"
         >
           <ArrowClockwiseIcon size={17} aria-hidden />
@@ -352,31 +551,26 @@ const ClipQueue = memo(function ClipQueue({
   );
 });
 
-function App() {
-  const [page, setPage] = useState<Page>(() =>
-    window.location.pathname === "/workbench" ? "workbench" : "configure",
-  );
-  const [rows, setRows] = useState<LabelRow[]>([]);
-  const [session, setSession] = useState<Session | null>(null);
-  const [reviews, setReviews] = useState<Record<string, ReviewState>>({});
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [draft, setDraft] = useState("");
-  const [filter, setFilter] = useState<Filter>("all");
-  const [query, setQuery] = useState("");
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [configured, setConfigured] = useState(false);
-  const [auto, setAuto] = useState<AutoSetup>(
-    INITIAL_SETUP?.auto ?? EMPTY_AUTO,
-  );
-  const [validation, setValidation] = useState<ValidationSetup>(
-    INITIAL_SETUP?.validation ?? EMPTY_VALIDATION,
-  );
-  const [load, setLoad] = useState<ReviewSetup>(
-    INITIAL_SETUP?.load ?? EMPTY_REVIEW,
-  );
+function useAppController() {
+  const [state, dispatch] = useReducer(appReducer, undefined, initialAppState);
+  const {
+    page,
+    rows,
+    session,
+    reviews,
+    selectedId,
+    draft,
+    filter,
+    query,
+    jobs,
+    busy,
+    notice,
+    error,
+    configured,
+    auto,
+    validation,
+    load,
+  } = state;
   const [restoringWorkbench, setRestoringWorkbench] = useState(
     () =>
       window.location.pathname === "/workbench" && Boolean(INITIAL_ACTIVE_REVIEW),
@@ -388,22 +582,32 @@ function App() {
 
   const navigate = (path: "/" | "/workbench") => {
     window.history.pushState({}, "", path);
-    setPage(path === "/workbench" ? "workbench" : "configure");
+    dispatch({
+      type: "pageChanged",
+      page: path === "/workbench" ? "workbench" : "configure",
+    });
   };
 
   const refreshJobs = async () => {
     try {
-      setJobs((await api.jobs()).jobs);
+      dispatch({ type: "jobsRefreshed", jobs: (await api.jobs()).jobs });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      dispatch({
+        type: "errorSet",
+        error: cause instanceof Error ? cause.message : String(cause),
+      });
     }
   };
 
   useEffect(() => {
     const onPopState = () =>
-      setPage(
-        window.location.pathname === "/workbench" ? "workbench" : "configure",
-      );
+      dispatch({
+        type: "pageChanged",
+        page:
+          window.location.pathname === "/workbench"
+            ? "workbench"
+            : "configure",
+      });
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
@@ -415,20 +619,21 @@ function App() {
           api.configuration(),
           api.jobs(),
         ]);
-        if (!INITIAL_SETUP) {
-          setAuto(configuration.autoLabel);
-          setValidation(configuration.validation);
-          setLoad(configuration.review);
-        }
-        setJobs(jobData.jobs);
-        setConfigured(true);
-        setNotice(
-          INITIAL_SETUP
+        dispatch({
+          type: "initialised",
+          jobs: jobData.jobs,
+          auto: INITIAL_SETUP ? undefined : configuration.autoLabel,
+          validation: INITIAL_SETUP ? undefined : configuration.validation,
+          load: INITIAL_SETUP ? undefined : configuration.review,
+          notice: INITIAL_SETUP
             ? "Restored saved configuration. Open the workbench to resume its review directory."
             : "Ready with project-root-relative configuration from the local server.",
-        );
+        });
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        dispatch({
+          type: "errorSet",
+          error: cause instanceof Error ? cause.message : String(cause),
+        });
       }
     };
     void initialise();
@@ -517,9 +722,52 @@ function App() {
     [selectedId, visibleRows],
   );
   const clearFilters = useCallback(() => {
-    setFilter("all");
-    setQuery("");
+    dispatch({ type: "filtersCleared" });
   }, []);
+  const changeFilter = useCallback(
+    (nextFilter: Filter) =>
+      dispatch({ type: "filterChanged", filter: nextFilter }),
+    [],
+  );
+  const changeQuery = useCallback(
+    (nextQuery: string) =>
+      dispatch({ type: "queryChanged", query: nextQuery }),
+    [],
+  );
+  const selectRow = useCallback(
+    (nextSelectedId: string) =>
+      dispatch({ type: "selectionChanged", selectedId: nextSelectedId }),
+    [],
+  );
+  const changeAuto = useCallback(
+    (nextAuto: AutoSetup) =>
+      dispatch({ type: "autoChanged", auto: nextAuto }),
+    [],
+  );
+  const changeValidation = useCallback(
+    (nextValidation: ValidationSetup) =>
+      dispatch({ type: "validationChanged", validation: nextValidation }),
+    [],
+  );
+  const changeLoad = useCallback(
+    (nextLoad: ReviewSetup) =>
+      dispatch({ type: "loadChanged", load: nextLoad }),
+    [],
+  );
+  const dismissMessage = useCallback(
+    () => dispatch({ type: "messageDismissed" }),
+    [],
+  );
+  const useJobOutputs = useCallback(
+    (outputs: Job["outputs"]) =>
+      dispatch({ type: "jobOutputsUsed", outputs }),
+    [],
+  );
+  const changeDraft = useCallback(
+    (nextDraft: string) =>
+      dispatch({ type: "draftChanged", draft: nextDraft }),
+    [],
+  );
   const autoJob = jobs.find(
     (job) =>
       job.name === "Auto-label audio" &&
@@ -533,41 +781,33 @@ function App() {
 
   useEffect(() => {
     if (visibleRows.length && !visibleRows.some((row) => row.id === selectedId))
-      setSelectedId(visibleRows[0].id);
+      dispatch({ type: "selectionChanged", selectedId: visibleRows[0].id });
   }, [selectedId, visibleRows]);
   useEffect(() => {
-    if (selected) setDraft(reviews[selected.id]?.label ?? automaticText);
+    if (selected)
+      dispatch({
+        type: "draftChanged",
+        draft: reviews[selected.id]?.label ?? automaticText,
+      });
   }, [automaticText, reviews, selected?.id]);
 
   const runAuto = async () => {
-    setBusy("auto");
-    setError(null);
+    dispatch({ type: "operationStarted", operation: "auto" });
     try {
       const { job } = await api.startAutoLabel(auto);
-      setJobs((current) => [job, ...current]);
-      setValidation((current) => ({
-        ...current,
-        metadataPath: job.outputs.metadataPath,
-        audioRoot: job.outputs.audioRoot,
-      }));
-      setLoad((current) => ({
-        ...current,
-        metadataPath: job.outputs.metadataPath,
-        audioRoot: job.outputs.audioRoot,
-      }));
-      setNotice(
-        "Auto-labeling started. Its output paths are ready for validation.",
-      );
+      dispatch({ type: "autoStarted", job });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      dispatch({
+        type: "errorSet",
+        error: cause instanceof Error ? cause.message : String(cause),
+      });
     } finally {
-      setBusy(null);
+      dispatch({ type: "operationFinished" });
     }
   };
 
   const runValidation = async () => {
-    setBusy("validation");
-    setError(null);
+    dispatch({ type: "operationStarted", operation: "validation" });
     try {
       const { job } = await api.startValidation({
         ...validation,
@@ -579,20 +819,14 @@ function App() {
         japaneseDictionary: validation.japaneseDictionary || undefined,
         englishDictionary: validation.englishDictionary || undefined,
       });
-      setJobs((current) => [job, ...current]);
-      setLoad((current) => ({
-        ...current,
-        metadataPath: job.outputs.metadataPath,
-        manifestPath: job.outputs.manifestPath,
-        audioRoot: job.outputs.audioRoot,
-      }));
-      setNotice(
-        "Validation started. Its candidate manifest is ready for the review queue.",
-      );
+      dispatch({ type: "validationStarted", job });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      dispatch({
+        type: "errorSet",
+        error: cause instanceof Error ? cause.message : String(cause),
+      });
     } finally {
-      setBusy(null);
+      dispatch({ type: "operationFinished" });
     }
   };
 
@@ -603,24 +837,26 @@ function App() {
       )
     )
       return;
-    setBusy(`cancel-${job.id}`);
-    setError(null);
+    dispatch({ type: "operationStarted", operation: `cancel-${job.id}` });
     try {
       const { job: cancelled } = await api.cancelJob(job.id);
-      setJobs((current) =>
-        current.map((item) => (item.id === cancelled.id ? cancelled : item)),
-      );
-      setNotice(`${job.name} is being cancelled.`);
+      dispatch({
+        type: "jobCancelled",
+        job: cancelled,
+        notice: `${job.name} is being cancelled.`,
+      });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      dispatch({
+        type: "errorSet",
+        error: cause instanceof Error ? cause.message : String(cause),
+      });
     } finally {
-      setBusy(null);
+      dispatch({ type: "operationFinished" });
     }
   };
 
   const loadRows = async (request: ReviewSetup = load, restoring = false) => {
-    setBusy("load");
-    setError(null);
+    dispatch({ type: "operationStarted", operation: "load" });
     try {
       const data = await api.loadDataset({
         ...request,
@@ -628,23 +864,26 @@ function App() {
         reviewRoot: request.reviewRoot || undefined,
         reviewer: request.reviewer || undefined,
       });
-      setRows(data.rows);
-      setSession(data.session);
-      setReviews(data.reviews);
-      setSelectedId(data.rows[0]?.id ?? null);
       const savedReview = { ...request, reviewRoot: data.session.directory };
-      setLoad(savedReview);
       localStorage.setItem(ACTIVE_REVIEW_STORAGE_KEY, JSON.stringify(savedReview));
-      setNotice(
-        restoring || data.session.resumed
+      window.history.pushState({}, "", "/workbench");
+      dispatch({
+        type: "datasetLoaded",
+        rows: data.rows,
+        session: data.session,
+        reviews: data.reviews,
+        load: savedReview,
+        notice: restoring || data.session.resumed
           ? `${Object.keys(data.reviews).length.toLocaleString()} saved reviews restored. You can continue where you paused.`
           : `${data.rows.length.toLocaleString()} rows loaded in a fresh review session.`,
-      );
-      navigate("/workbench");
+      });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      dispatch({
+        type: "errorSet",
+        error: cause instanceof Error ? cause.message : String(cause),
+      });
     } finally {
-      setBusy(null);
+      dispatch({ type: "operationFinished" });
       if (restoring) setRestoringWorkbench(false);
     }
   };
@@ -665,8 +904,7 @@ function App() {
 
   const save = async () => {
     if (!selected || !session) return;
-    setBusy("save");
-    setError(null);
+    dispatch({ type: "operationStarted", operation: "save" });
     const action = draft === selected.originalLabel ? "confirmed" : "edited";
     try {
       const { review } = await api.saveReview({
@@ -675,20 +913,26 @@ function App() {
         text: draft,
         action,
       });
-      setReviews((current) => ({ ...current, [selected.id]: review.human }));
-      setNotice(
-        `${action === "edited" ? "Human edit" : "Confirmation"} saved with provenance.`,
-      );
+      dispatch({
+        type: "reviewSaved",
+        rowId: selected.id,
+        review: review.human,
+        notice: `${action === "edited" ? "Human edit" : "Confirmation"} saved with provenance.`,
+      });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      dispatch({
+        type: "errorSet",
+        error: cause instanceof Error ? cause.message : String(cause),
+      });
     } finally {
-      setBusy(null);
+      dispatch({ type: "operationFinished" });
     }
   };
 
   const selectRelative = (delta: number) => {
     const target = visibleRows[selectedVisibleIndex + delta];
-    if (target) setSelectedId(target.id);
+    if (target)
+      dispatch({ type: "selectionChanged", selectedId: target.id });
   };
 
   const startOrStopAudio = () => {
@@ -703,7 +947,10 @@ function App() {
     void audio
       .play()
       .catch((cause) =>
-        setError(cause instanceof Error ? cause.message : String(cause)),
+        dispatch({
+          type: "errorSet",
+          error: cause instanceof Error ? cause.message : String(cause),
+        }),
       );
   };
 
@@ -714,7 +961,10 @@ function App() {
     void audio
       .play()
       .catch((cause) =>
-        setError(cause instanceof Error ? cause.message : String(cause)),
+        dispatch({
+          type: "errorSet",
+          error: cause instanceof Error ? cause.message : String(cause),
+        }),
       );
   };
 
@@ -785,365 +1035,98 @@ function App() {
     return () => document.body.removeEventListener("keydown", onKeyDown, { capture: true });
   }, []);
 
+  return {
+    page,
+    rows,
+    session,
+    reviews,
+    selectedId,
+    draft,
+    filter,
+    query,
+    jobs,
+    busy,
+    notice,
+    error,
+    configured,
+    auto,
+    validation,
+    load,
+    restoringWorkbench,
+    selected,
+    automaticText,
+    hasUnsavedChange,
+    filterCounts,
+    reviewCount,
+    visibleRows,
+    selectedVisibleIndex,
+    autoJob,
+    validationJob,
+    audioRef,
+    labelRef,
+    mainPanelRef,
+    navigate,
+    refreshJobs,
+    runAuto,
+    runValidation,
+    cancel,
+    loadRows,
+    save,
+    selectRelative,
+    clearFilters,
+    changeFilter,
+    changeQuery,
+    selectRow,
+    changeAuto,
+    changeValidation,
+    changeLoad,
+    dismissMessage,
+    useJobOutputs,
+    changeDraft,
+  };
+}
+
+type AppController = ReturnType<typeof useAppController>;
+
+function App() {
+  const controller = useAppController();
+  const {
+    page,
+    rows,
+    session,
+    reviews,
+    selectedId,
+    draft,
+    filter,
+    query,
+    busy,
+    restoringWorkbench,
+    selected,
+    automaticText,
+    hasUnsavedChange,
+    filterCounts,
+    visibleRows,
+    selectedVisibleIndex,
+    audioRef,
+    labelRef,
+    mainPanelRef,
+    navigate,
+    save,
+    selectRelative,
+    clearFilters,
+    changeFilter,
+    changeQuery,
+    selectRow,
+    changeDraft,
+  } = controller;
+
   return (
     <main className="min-h-screen">
-      <header className="sticky top-0 z-10 flex min-h-[58px] items-center justify-between gap-4 border-b border-edge bg-[color-mix(in_oklch,var(--bg)_92%,var(--surface))] px-5 py-2.5 max-[780px]:px-3.5">
-        <div className="flex items-center gap-2 text-sm tracking-[-0.01em]">
-          <span className="grid h-6 w-6 place-items-center rounded-md bg-raised text-primary" aria-hidden>
-            <WaveformIcon size={18} weight="bold" />
-          </span>
-          <span>daiya</span>
-          <span className="text-faint">/</span>
-          {page === "workbench" ? (
-            <button
-              className="border-0 bg-transparent p-0 font-[650] text-ink underline decoration-transparent underline-offset-[3px] transition-colors hover:text-primary hover:decoration-current"
-              type="button"
-              onClick={() => navigate("/")}
-            >
-              labeling
-            </button>
-          ) : (
-            <strong className="font-[650]">labeling</strong>
-          )}
-          {page === "workbench" && (
-            <>
-              <span className="text-faint">/</span>
-              <strong className="font-[650]">workbench</strong>
-            </>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {session && page === "workbench" && (
-            <span className="inline-flex items-center gap-1.5 text-xs text-muted max-[780px]:hidden">
-              <ShieldCheckIcon className="text-ok" size={15} aria-hidden /> {reviewCount}/{rows.length}{" "}
-              reviewed
-            </span>
-          )}
-          {page === "workbench" && (
-            <button
-              className="button button--secondary"
-              type="button"
-              onClick={() => navigate("/")}
-            >
-              <GearSixIcon size={17} aria-hidden /> Configure
-            </button>
-          )}
-        </div>
-      </header>
+      <AppHeader controller={controller} />
 
-      {(notice || error) && (
-        <div className={`flex min-h-11 items-center justify-between gap-3 border-b px-5 py-2 text-[13px] text-ink max-[780px]:px-3.5 ${error ? "border-[color-mix(in_oklch,var(--danger)_42%,var(--edge))] bg-[color-mix(in_oklch,var(--danger)_12%,var(--bg))]" : "border-[color-mix(in_oklch,var(--primary)_32%,var(--edge))] bg-[color-mix(in_oklch,var(--primary)_10%,var(--bg))]"}`} role="status">
-          <span>{error ?? notice}</span>
-          <button
-            type="button"
-            className="grid place-items-center border-0 bg-transparent text-inherit"
-            aria-label="Dismiss message"
-            onClick={() => {
-              setNotice(null);
-              setError(null);
-            }}
-          >
-            <XIcon size={16} aria-hidden />
-          </button>
-        </div>
-      )}
+      <AppMessage controller={controller} />
 
-      {page === "configure" && (
-        <section className="setup" aria-label="Dataset configuration">
-          <div className="setup-intro">
-            <span className="eyebrow">Configuration</span>
-            <h1>Prepare, validate, and open a review queue.</h1>
-            <p>
-              Paths and options are stored in this browser after every change.
-              They are project-root-relative by default, and an existing
-              human-review directory resumes its saved decisions.
-            </p>
-          </div>
-          <div className="setup-grid">
-            <form
-              className="setup-panel"
-              onSubmit={(event) => {
-                event.preventDefault();
-                autoJob ? void cancel(autoJob) : void runAuto();
-              }}
-            >
-              <div className="panel-heading">
-                <span className="panel-icon">
-                  <SparkleIcon size={18} />
-                </span>
-                <div>
-                  <h2>Auto-label audio</h2>
-                  <p>
-                    Build a labeled audiofolder dataset with{" "}
-                    <code>auto-label</code>.
-                  </p>
-                </div>
-              </div>
-              <PathField
-                label="Input audio directory"
-                value={auto.inputDir}
-                onChange={(inputDir) => setAuto({ ...auto, inputDir })}
-                placeholder="training/dataset/raw"
-              />
-              <PathField
-                label="New dataset output directory"
-                value={auto.outputDir}
-                onChange={(outputDir) => setAuto({ ...auto, outputDir })}
-                placeholder="training/dataset/hf_datasets/run"
-                allowMissing
-              />
-              <PathField
-                label="Pipeline work directory"
-                value={auto.workDir}
-                onChange={(workDir) => setAuto({ ...auto, workDir })}
-                placeholder="training/processor/whisper/work"
-                allowMissing
-              />
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={auto.noOverlapFilter}
-                  onChange={(event) =>
-                    setAuto({ ...auto, noOverlapFilter: event.target.checked })
-                  }
-                />{" "}
-                Skip overlap filtering
-              </label>
-              <button
-                className={
-                  autoJob ? "button button--danger" : "button button--primary"
-                }
-                disabled={!configured || busy !== null}
-                type="submit"
-              >
-                {autoJob ? (
-                  <StopIcon size={16} weight="fill" />
-                ) : (
-                  <PlayIcon size={16} weight="fill" />
-                )}
-                {autoJob
-                  ? "Cancel auto-labeling"
-                  : busy === "auto"
-                    ? "Starting…"
-                    : "Run auto-labeling"}
-              </button>
-              {autoJob && <JobProgress job={autoJob} />}
-            </form>
-
-            <form
-              className="setup-panel"
-              onSubmit={(event) => {
-                event.preventDefault();
-                validationJob
-                  ? void cancel(validationJob)
-                  : void runValidation();
-              }}
-            >
-              <div className="panel-heading">
-                <span className="panel-icon">
-                  <WarningCircleIcon size={18} />
-                </span>
-                <div>
-                  <h2>Validate with spellcheck</h2>
-                  <p>Write spelling evidence and a candidate manifest.</p>
-                </div>
-              </div>
-              <PathField
-                label="Pipeline metadata.jsonl"
-                value={validation.metadataPath}
-                onChange={(metadataPath) =>
-                  setValidation({ ...validation, metadataPath })
-                }
-                placeholder="training/dataset/hf_datasets/run/metadata.jsonl"
-                kind="file"
-              />
-              <PathField
-                label="Audio root"
-                value={validation.audioRoot}
-                onChange={(audioRoot) =>
-                  setValidation({ ...validation, audioRoot })
-                }
-                placeholder="training/dataset/hf_datasets/run"
-              />
-              <PathField
-                label="Validation output root"
-                value={validation.outputRoot}
-                onChange={(outputRoot) =>
-                  setValidation({ ...validation, outputRoot })
-                }
-                placeholder="training/processor/whisper/output/validation"
-                allowMissing
-              />
-              <div className="fields fields--two">
-                <TextField
-                  label="Thai engine"
-                  value={validation.thaiEngine}
-                  onChange={(thaiEngine) =>
-                    setValidation({ ...validation, thaiEngine })
-                  }
-                />
-                <TextField
-                  label="Expected scripts"
-                  value={validation.expectedScripts}
-                  onChange={(expectedScripts) =>
-                    setValidation({ ...validation, expectedScripts })
-                  }
-                />
-              </div>
-              <div className="fields fields--two">
-                <TextField
-                  label="Review threshold"
-                  value={validation.reviewThreshold}
-                  onChange={(reviewThreshold) =>
-                    setValidation({ ...validation, reviewThreshold })
-                  }
-                />
-                <TextField
-                  label="Minimum issues"
-                  value={validation.minIssues}
-                  onChange={(minIssues) =>
-                    setValidation({ ...validation, minIssues })
-                  }
-                />
-              </div>
-              <details>
-                <summary>
-                  Optional Japanese, English, and allowlist paths
-                </summary>
-                <TextField
-                  label="Japanese dictionary"
-                  value={validation.japaneseDictionary}
-                  onChange={(japaneseDictionary) =>
-                    setValidation({ ...validation, japaneseDictionary })
-                  }
-                  placeholder="small, core, or full"
-                />
-                <PathField
-                  label="English frequency dictionary"
-                  value={validation.englishDictionary}
-                  onChange={(englishDictionary) =>
-                    setValidation({ ...validation, englishDictionary })
-                  }
-                  placeholder="training/resources/en.txt"
-                  kind="file"
-                />
-                <PathField
-                  label="Versioned allowlist"
-                  value={validation.allowlist}
-                  onChange={(allowlist) =>
-                    setValidation({ ...validation, allowlist })
-                  }
-                  placeholder="training/resources/terms.txt"
-                  kind="file"
-                />
-              </details>
-              <button
-                className={
-                  validationJob
-                    ? "button button--danger"
-                    : "button button--primary"
-                }
-                disabled={!configured || busy !== null}
-                type="submit"
-              >
-                {validationJob ? (
-                  <StopIcon size={16} weight="fill" />
-                ) : (
-                  <PlayIcon size={16} weight="fill" />
-                )}
-                {validationJob
-                  ? "Cancel validation"
-                  : busy === "validation"
-                    ? "Starting…"
-                    : "Run validation"}
-              </button>
-              {validationJob && <JobProgress job={validationJob} />}
-            </form>
-
-            <form
-              className="setup-panel setup-panel--load"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void loadRows();
-              }}
-            >
-              <div className="panel-heading">
-                <span className="panel-icon">
-                  <ListBulletsIcon size={18} />
-                </span>
-                <div>
-                  <h2>Open or resume workbench</h2>
-                  <p>
-                    Use a saved review directory to continue an earlier review.
-                  </p>
-                </div>
-              </div>
-              <PathField
-                label="metadata.jsonl"
-                value={load.metadataPath}
-                onChange={(metadataPath) => setLoad({ ...load, metadataPath })}
-                placeholder="training/dataset/hf_datasets/run/metadata.jsonl"
-                kind="file"
-              />
-              <PathField
-                label="Candidate manifest.jsonl"
-                value={load.manifestPath}
-                onChange={(manifestPath) => setLoad({ ...load, manifestPath })}
-                placeholder="training/processor/whisper/output/validation/.../candidate-manifest.jsonl"
-                kind="file"
-              />
-              <PathField
-                label="Audio root"
-                value={load.audioRoot}
-                onChange={(audioRoot) => setLoad({ ...load, audioRoot })}
-                placeholder="training/dataset/hf_datasets/run"
-              />
-              <div className="fields fields--two">
-                <PathField
-                  label="Review output directory"
-                  value={load.reviewRoot}
-                  onChange={(reviewRoot) => setLoad({ ...load, reviewRoot })}
-                  placeholder="training/processor/whisper/web/human-reviews/run"
-                  allowMissing
-                />
-                <TextField
-                  label="Reviewer"
-                  value={load.reviewer}
-                  onChange={(reviewer) => setLoad({ ...load, reviewer })}
-                  placeholder="Defaults to Windows user"
-                />
-              </div>
-              <button
-                className="button button--primary"
-                disabled={!configured || busy !== null}
-                type="submit"
-              >
-                <FileAudioIcon size={16} weight="fill" />
-                {busy === "load" ? "Opening…" : "Open workbench"}
-              </button>
-            </form>
-          </div>
-          {jobs.length > 0 && (
-            <JobRail
-              jobs={jobs}
-              onRefresh={() => void refreshJobs()}
-              onUseOutput={(outputs) => {
-                setValidation((current) => ({
-                  ...current,
-                  metadataPath: outputs.metadataPath ?? current.metadataPath,
-                  audioRoot: outputs.audioRoot ?? current.audioRoot,
-                }));
-                setLoad((current) => ({
-                  ...current,
-                  metadataPath: outputs.metadataPath ?? current.metadataPath,
-                  manifestPath: outputs.manifestPath ?? current.manifestPath,
-                  audioRoot: outputs.audioRoot ?? current.audioRoot,
-                }));
-              }}
-            />
-          )}
-        </section>
-      )}
+      {page === "configure" && <ConfigurationPage controller={controller} />}
 
       {page === "workbench" && !rows.length && restoringWorkbench && (
         <section className="empty-state workbench-loading" aria-live="polite">
@@ -1182,9 +1165,9 @@ function App() {
             totalRows={rows.length}
             visibleRows={visibleRows}
             onClearFilters={clearFilters}
-            onFilterChange={setFilter}
-            onQueryChange={setQuery}
-            onSelect={setSelectedId}
+            onFilterChange={changeFilter}
+            onQueryChange={changeQuery}
+            onSelect={selectRow}
           />
           {selected && (
             <article className="editor">
@@ -1231,7 +1214,7 @@ function App() {
                   </div>
                   <div className="audio-strip">
                     <div>
-                      <strong>Chunk audio</strong>
+                      <strong id="chunk-audio-label">Chunk audio</strong>
                       <span>
                         Ctrl + E moves focus here for Space audio. Alt + ↑/↓ or
                         Alt + A/D moves clips. 0–9 seeks and plays 0–90%.
@@ -1240,6 +1223,7 @@ function App() {
                     {selected.audioPath ? (
                       <audio
                         ref={audioRef}
+                        aria-labelledby="chunk-audio-label"
                         controls
                         preload="metadata"
                         src={audioUrl(selected.audioPath)}
@@ -1283,7 +1267,7 @@ function App() {
                       ref={labelRef}
                       id="human-label"
                       value={draft}
-                      onChange={(event) => setDraft(event.target.value)}
+                      onChange={(event) => changeDraft(event.target.value)}
                       spellCheck="false"
                       rows={7}
                     />
@@ -1291,7 +1275,7 @@ function App() {
                       <button
                         className="button button--secondary"
                         type="button"
-                        onClick={() => setDraft(automaticText)}
+                        onClick={() => changeDraft(automaticText)}
                       >
                         Restore automatic text
                       </button>
@@ -1368,6 +1352,384 @@ function App() {
         </section>
       )}
     </main>
+  );
+}
+
+function AppHeader({ controller }: { controller: AppController }) {
+  const { page, session, reviewCount, rows, navigate } = controller;
+  return (
+    <header className="sticky top-0 z-10 flex min-h-[58px] items-center justify-between gap-4 border-b border-edge bg-[color-mix(in_oklch,var(--bg)_92%,var(--surface))] px-5 py-2.5 max-[780px]:px-3.5">
+      <div className="flex items-center gap-2 text-sm tracking-[-0.01em]">
+        <span
+          className="grid h-6 w-6 place-items-center rounded-md bg-raised text-primary"
+          aria-hidden
+        >
+          <WaveformIcon size={18} weight="bold" />
+        </span>
+        <span>daiya</span>
+        <span className="text-faint">/</span>
+        {page === "workbench" ? (
+          <button
+            className="border-0 bg-transparent p-0 font-[650] text-ink underline decoration-transparent underline-offset-[3px] transition-colors hover:text-primary hover:decoration-current"
+            type="button"
+            onClick={() => navigate("/")}
+          >
+            labeling
+          </button>
+        ) : (
+          <strong className="font-[650]">labeling</strong>
+        )}
+        {page === "workbench" && (
+          <>
+            <span className="text-faint">/</span>
+            <strong className="font-[650]">workbench</strong>
+          </>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        {session && page === "workbench" && (
+          <span className="inline-flex items-center gap-1.5 text-xs text-muted max-[780px]:hidden">
+            <ShieldCheckIcon className="text-ok" size={15} aria-hidden />{" "}
+            {reviewCount}/{rows.length} reviewed
+          </span>
+        )}
+        {page === "workbench" && (
+          <button
+            className="button button--secondary"
+            type="button"
+            onClick={() => navigate("/")}
+          >
+            <GearSixIcon size={17} aria-hidden /> Configure
+          </button>
+        )}
+      </div>
+    </header>
+  );
+}
+
+function AppMessage({ controller }: { controller: AppController }) {
+  const { error, notice, dismissMessage } = controller;
+  if (!notice && !error) return null;
+  return (
+    <div
+      className={`flex min-h-11 items-center justify-between gap-3 border-b px-5 py-2 text-[13px] text-ink max-[780px]:px-3.5 ${error ? "border-[color-mix(in_oklch,var(--danger)_42%,var(--edge))] bg-[color-mix(in_oklch,var(--danger)_12%,var(--bg))]" : "border-[color-mix(in_oklch,var(--primary)_32%,var(--edge))] bg-[color-mix(in_oklch,var(--primary)_10%,var(--bg))]"}`}
+      role="status"
+    >
+      <span>{error ?? notice}</span>
+      <button
+        type="button"
+        className="grid place-items-center border-0 bg-transparent text-inherit"
+        aria-label="Dismiss message"
+        onClick={dismissMessage}
+      >
+        <XIcon size={16} aria-hidden />
+      </button>
+    </div>
+  );
+}
+
+function ConfigurationPage({ controller }: { controller: AppController }) {
+  const { jobs, refreshJobs, useJobOutputs } = controller;
+  return (
+    <section className="setup" aria-label="Dataset configuration">
+      <div className="setup-intro">
+        <span className="eyebrow">Configuration</span>
+        <h1>Prepare, validate, and open a review queue.</h1>
+        <p>
+          Paths and options are stored in this browser after every change. They
+          are project-root-relative by default, and an existing human-review
+          directory resumes its saved decisions.
+        </p>
+      </div>
+      <div className="setup-grid">
+        <AutoLabelForm controller={controller} />
+        <ValidationForm controller={controller} />
+        <ReviewSetupForm controller={controller} />
+      </div>
+      {jobs.length > 0 && (
+        <JobRail
+          jobs={jobs}
+          onRefresh={() => void refreshJobs()}
+          onUseOutput={useJobOutputs}
+        />
+      )}
+    </section>
+  );
+}
+
+function AutoLabelForm({ controller }: { controller: AppController }) {
+  const { auto, autoJob, busy, configured, cancel, runAuto, changeAuto } =
+    controller;
+  return (
+    <form
+      className="setup-panel"
+      onSubmit={(event) => {
+        event.preventDefault();
+        autoJob ? void cancel(autoJob) : void runAuto();
+      }}
+    >
+      <div className="panel-heading">
+        <span className="panel-icon">
+          <SparkleIcon size={18} />
+        </span>
+        <div>
+          <h2>Auto-label audio</h2>
+          <p>
+            Build a labeled audiofolder dataset with <code>auto-label</code>.
+          </p>
+        </div>
+      </div>
+      <PathField
+        label="Input audio directory"
+        value={auto.inputDir}
+        onChange={(inputDir) => changeAuto({ ...auto, inputDir })}
+        placeholder="training/dataset/raw"
+      />
+      <PathField
+        label="New dataset output directory"
+        value={auto.outputDir}
+        onChange={(outputDir) => changeAuto({ ...auto, outputDir })}
+        placeholder="training/dataset/hf_datasets/run"
+        allowMissing
+      />
+      <PathField
+        label="Pipeline work directory"
+        value={auto.workDir}
+        onChange={(workDir) => changeAuto({ ...auto, workDir })}
+        placeholder="training/processor/whisper/work"
+        allowMissing
+      />
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={auto.noOverlapFilter}
+          onChange={(event) =>
+            changeAuto({ ...auto, noOverlapFilter: event.target.checked })
+          }
+        />{" "}
+        Skip overlap filtering
+      </label>
+      <button
+        className={
+          autoJob ? "button button--danger" : "button button--primary"
+        }
+        disabled={!configured || busy !== null}
+        type="submit"
+      >
+        {autoJob ? (
+          <StopIcon size={16} weight="fill" />
+        ) : (
+          <PlayIcon size={16} weight="fill" />
+        )}
+        {autoJob
+          ? "Cancel auto-labeling"
+          : busy === "auto"
+            ? "Starting…"
+            : "Run auto-labeling"}
+      </button>
+      {autoJob && <JobProgress job={autoJob} />}
+    </form>
+  );
+}
+
+function ValidationForm({ controller }: { controller: AppController }) {
+  const {
+    validation,
+    validationJob,
+    busy,
+    configured,
+    cancel,
+    runValidation,
+    changeValidation,
+  } = controller;
+  return (
+    <form
+      className="setup-panel"
+      onSubmit={(event) => {
+        event.preventDefault();
+        validationJob ? void cancel(validationJob) : void runValidation();
+      }}
+    >
+      <div className="panel-heading">
+        <span className="panel-icon">
+          <WarningCircleIcon size={18} />
+        </span>
+        <div>
+          <h2>Validate with spellcheck</h2>
+          <p>Write spelling evidence and a candidate manifest.</p>
+        </div>
+      </div>
+      <PathField
+        label="Pipeline metadata.jsonl"
+        value={validation.metadataPath}
+        onChange={(metadataPath) =>
+          changeValidation({ ...validation, metadataPath })
+        }
+        placeholder="training/dataset/hf_datasets/run/metadata.jsonl"
+        kind="file"
+      />
+      <PathField
+        label="Audio root"
+        value={validation.audioRoot}
+        onChange={(audioRoot) => changeValidation({ ...validation, audioRoot })}
+        placeholder="training/dataset/hf_datasets/run"
+      />
+      <PathField
+        label="Validation output root"
+        value={validation.outputRoot}
+        onChange={(outputRoot) =>
+          changeValidation({ ...validation, outputRoot })
+        }
+        placeholder="training/processor/whisper/output/validation"
+        allowMissing
+      />
+      <div className="fields fields--two">
+        <TextField
+          label="Thai engine"
+          value={validation.thaiEngine}
+          onChange={(thaiEngine) =>
+            changeValidation({ ...validation, thaiEngine })
+          }
+        />
+        <TextField
+          label="Expected scripts"
+          value={validation.expectedScripts}
+          onChange={(expectedScripts) =>
+            changeValidation({ ...validation, expectedScripts })
+          }
+        />
+      </div>
+      <div className="fields fields--two">
+        <TextField
+          label="Review threshold"
+          value={validation.reviewThreshold}
+          onChange={(reviewThreshold) =>
+            changeValidation({ ...validation, reviewThreshold })
+          }
+        />
+        <TextField
+          label="Minimum issues"
+          value={validation.minIssues}
+          onChange={(minIssues) =>
+            changeValidation({ ...validation, minIssues })
+          }
+        />
+      </div>
+      <details>
+        <summary>Optional Japanese, English, and allowlist paths</summary>
+        <TextField
+          label="Japanese dictionary"
+          value={validation.japaneseDictionary}
+          onChange={(japaneseDictionary) =>
+            changeValidation({ ...validation, japaneseDictionary })
+          }
+          placeholder="small, core, or full"
+        />
+        <PathField
+          label="English frequency dictionary"
+          value={validation.englishDictionary}
+          onChange={(englishDictionary) =>
+            changeValidation({ ...validation, englishDictionary })
+          }
+          placeholder="training/resources/en.txt"
+          kind="file"
+        />
+        <PathField
+          label="Versioned allowlist"
+          value={validation.allowlist}
+          onChange={(allowlist) =>
+            changeValidation({ ...validation, allowlist })
+          }
+          placeholder="training/resources/terms.txt"
+          kind="file"
+        />
+      </details>
+      <button
+        className={
+          validationJob ? "button button--danger" : "button button--primary"
+        }
+        disabled={!configured || busy !== null}
+        type="submit"
+      >
+        {validationJob ? (
+          <StopIcon size={16} weight="fill" />
+        ) : (
+          <PlayIcon size={16} weight="fill" />
+        )}
+        {validationJob
+          ? "Cancel validation"
+          : busy === "validation"
+            ? "Starting…"
+            : "Run validation"}
+      </button>
+      {validationJob && <JobProgress job={validationJob} />}
+    </form>
+  );
+}
+
+function ReviewSetupForm({ controller }: { controller: AppController }) {
+  const { load, busy, configured, loadRows, changeLoad } = controller;
+  return (
+    <form
+      className="setup-panel setup-panel--load"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void loadRows();
+      }}
+    >
+      <div className="panel-heading">
+        <span className="panel-icon">
+          <ListBulletsIcon size={18} />
+        </span>
+        <div>
+          <h2>Open or resume workbench</h2>
+          <p>Use a saved review directory to continue an earlier review.</p>
+        </div>
+      </div>
+      <PathField
+        label="metadata.jsonl"
+        value={load.metadataPath}
+        onChange={(metadataPath) => changeLoad({ ...load, metadataPath })}
+        placeholder="training/dataset/hf_datasets/run/metadata.jsonl"
+        kind="file"
+      />
+      <PathField
+        label="Candidate manifest.jsonl"
+        value={load.manifestPath}
+        onChange={(manifestPath) => changeLoad({ ...load, manifestPath })}
+        placeholder="training/processor/whisper/output/validation/.../candidate-manifest.jsonl"
+        kind="file"
+      />
+      <PathField
+        label="Audio root"
+        value={load.audioRoot}
+        onChange={(audioRoot) => changeLoad({ ...load, audioRoot })}
+        placeholder="training/dataset/hf_datasets/run"
+      />
+      <div className="fields fields--two">
+        <PathField
+          label="Review output directory"
+          value={load.reviewRoot}
+          onChange={(reviewRoot) => changeLoad({ ...load, reviewRoot })}
+          placeholder="training/processor/whisper/web/human-reviews/run"
+          allowMissing
+        />
+        <TextField
+          label="Reviewer"
+          value={load.reviewer}
+          onChange={(reviewer) => changeLoad({ ...load, reviewer })}
+          placeholder="Defaults to Windows user"
+        />
+      </div>
+      <button
+        className="button button--primary"
+        disabled={!configured || busy !== null}
+        type="submit"
+      >
+        <FileAudioIcon size={16} weight="fill" />
+        {busy === "load" ? "Opening…" : "Open workbench"}
+      </button>
+    </form>
   );
 }
 
