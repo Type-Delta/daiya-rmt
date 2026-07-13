@@ -1,21 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  CaretDown,
-  CaretUp,
-  DownloadSimple,
-  FileAudio,
-  HardDrives,
-  Microphone,
-  Monitor,
-  Play,
-  SlidersHorizontal,
-  Stop,
-  TerminalWindow,
-  Trash,
-  UploadSimple,
-  WarningCircle,
-  Waveform,
-  X,
+  CaretDownIcon,
+  CaretUpIcon,
+  DownloadSimpleIcon,
+  FileAudioIcon,
+  HardDrivesIcon,
+  MicrophoneIcon,
+  MonitorIcon,
+  PlayIcon,
+  SlidersHorizontalIcon,
+  StopIcon,
+  TerminalWindowIcon,
+  TrashIcon,
+  UploadSimpleIcon,
+  WarningCircleIcon,
+  WaveformIcon,
+  XIcon,
 } from '@phosphor-icons/react';
 import {
   DEFAULT_SETTINGS,
@@ -34,11 +34,11 @@ import { startMic, type MicHandle } from './audio/mic';
 
 type Status = 'idle' | 'connecting' | 'live' | 'error';
 
-const SOURCES: { id: SourceId; label: string; icon: typeof Microphone }[] = [
-  { id: 'browser-mic', label: 'Browser mic', icon: Microphone },
-  { id: 'server-mic', label: 'Server mic', icon: HardDrives },
-  { id: 'desktop', label: 'Desktop audio', icon: Monitor },
-  { id: 'replay', label: 'Replay file', icon: FileAudio },
+const SOURCES: { id: SourceId; label: string; icon: typeof MicrophoneIcon }[] = [
+  { id: 'browser-mic', label: 'Browser mic', icon: MicrophoneIcon },
+  { id: 'server-mic', label: 'Server mic', icon: HardDrivesIcon },
+  { id: 'desktop', label: 'Desktop audio', icon: MonitorIcon },
+  { id: 'replay', label: 'Replay file', icon: FileAudioIcon },
 ];
 
 // Categorical speaker hues at matched lightness/chroma; assigned by first appearance.
@@ -433,7 +433,7 @@ function SettingsPanel({
             onClick={onClose}
             className={`rounded p-1 text-muted hover:text-ink ${FOCUS_RING}`}
           >
-            <X size={16} aria-hidden />
+            <XIcon size={16} aria-hidden />
           </button>
         )}
       </div>
@@ -529,7 +529,7 @@ function Transcript({ segments, status }: { segments: Segment[]; status: Status 
   if (segments.length === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-        <Waveform size={40} className="text-faint" aria-hidden />
+        <WaveformIcon size={40} className="text-faint" aria-hidden />
         <p className="font-medium">{status === 'live' ? 'Listening…' : 'No transcript yet'}</p>
         <p className="max-w-sm text-sm text-muted">
           Pick a source and press Start. Dim text is a provisional pass; it turns solid once the
@@ -627,7 +627,7 @@ function SpeakerTimeline({ segments, clock, status }: { segments: Segment[]; clo
   if (runs.length === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-        <Waveform size={40} className="text-faint" aria-hidden />
+        <WaveformIcon size={40} className="text-faint" aria-hidden />
         <p className="font-medium">{status === 'live' ? 'Listening…' : 'Speaker timeline'}</p>
         <p className="max-w-sm text-sm text-muted">
           ASR is off — this session shows who is speaking and when, with no transcript text.
@@ -691,9 +691,9 @@ function ConsoleDrawer({
           aria-expanded={open}
           className={`flex items-center gap-2 rounded text-sm text-muted hover:text-ink ${FOCUS_RING}`}
         >
-          <TerminalWindow size={16} aria-hidden />
+          <TerminalWindowIcon size={16} aria-hidden />
           Server console
-          {open ? <CaretDown size={14} aria-hidden /> : <CaretUp size={14} aria-hidden />}
+          {open ? <CaretDownIcon size={14} aria-hidden /> : <CaretUpIcon size={14} aria-hidden />}
         </button>
         {lines.length > 0 && <span className="text-xs tabular-nums text-faint">{lines.length}</span>}
         <div className="flex-1" />
@@ -704,7 +704,7 @@ function ConsoleDrawer({
             aria-label="Clear console"
             className={`rounded p-1 text-faint hover:text-ink ${FOCUS_RING}`}
           >
-            <Trash size={15} aria-hidden />
+            <TrashIcon size={15} aria-hidden />
           </button>
         )}
       </div>
@@ -828,7 +828,7 @@ export default function App() {
     <div className="flex h-dvh flex-col">
       <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-edge px-4 py-2.5 md:px-6">
         <div className="flex items-center gap-2">
-          <Waveform size={20} weight="bold" className="text-primary" aria-hidden />
+          <WaveformIcon size={20} weight="bold" className="text-primary" aria-hidden />
           <h1 className="text-sm font-semibold tracking-tight">Daiya</h1>
           <span className="text-xs text-faint">v0 testbed</span>
         </div>
@@ -841,7 +841,7 @@ export default function App() {
           onClick={() => setSettingsOpen((v) => !v)}
           className={`rounded-md p-2 text-muted hover:text-ink lg:hidden ${FOCUS_RING}`}
         >
-          <SlidersHorizontal size={18} aria-hidden />
+          <SlidersHorizontalIcon size={18} aria-hidden />
         </button>
       </header>
 
@@ -851,7 +851,7 @@ export default function App() {
           className="flex items-center gap-2 border-b border-edge px-4 py-2 text-sm md:px-6"
           style={{ background: 'color-mix(in oklab, var(--danger) 12%, var(--bg))' }}
         >
-          <WarningCircle size={16} className="shrink-0 text-danger" aria-hidden />
+          <WarningCircleIcon size={16} className="shrink-0 text-danger" aria-hidden />
           <span className="min-w-0 flex-1">{error}</span>
           <button
             type="button"
@@ -859,7 +859,7 @@ export default function App() {
             onClick={dismissError}
             className={`rounded p-1 text-muted hover:text-ink ${FOCUS_RING}`}
           >
-            <X size={14} aria-hidden />
+            <XIcon size={14} aria-hidden />
           </button>
         </div>
       )}
@@ -872,7 +872,7 @@ export default function App() {
               running ? 'cursor-not-allowed opacity-50' : ''
             }`}
           >
-            <UploadSimple size={16} aria-hidden />
+            <UploadSimpleIcon size={16} aria-hidden />
             <span className="max-w-40 truncate">{file ? file.name : 'Choose audio file'}</span>
             <input
               type="file"
@@ -891,7 +891,7 @@ export default function App() {
           title={segments.length === 0 ? 'Nothing to export yet' : 'Export transcript as SRT'}
           className={`flex h-9 items-center gap-2 rounded-md border border-edge bg-surface px-3 text-sm text-muted transition-colors duration-150 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 ${FOCUS_RING}`}
         >
-          <DownloadSimple size={15} aria-hidden />
+          <DownloadSimpleIcon size={15} aria-hidden />
           SRT
         </button>
         {running ? (
@@ -900,7 +900,7 @@ export default function App() {
             onClick={stop}
             className={`flex h-9 items-center gap-2 rounded-md border border-edge bg-raised px-4 text-sm font-semibold text-ink transition-colors duration-150 hover:border-danger hover:text-danger ${FOCUS_RING}`}
           >
-            <Stop size={15} weight="fill" aria-hidden />
+            <StopIcon size={15} weight="fill" aria-hidden />
             Stop
           </button>
         ) : (
@@ -917,7 +917,7 @@ export default function App() {
             }
             className={`flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-semibold text-primary-ink transition-opacity duration-150 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 ${FOCUS_RING}`}
           >
-            <Play size={15} weight="fill" aria-hidden />
+            <PlayIcon size={15} weight="fill" aria-hidden />
             Start
           </button>
         )}
