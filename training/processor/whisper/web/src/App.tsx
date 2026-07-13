@@ -65,6 +65,7 @@ function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [configured, setConfigured] = useState(false);
   const [auto, setAuto] = useState({ inputDir: '', outputDir: '', workDir: '', noOverlapFilter: false });
   const [validation, setValidation] = useState({ metadataPath: '', audioRoot: '', outputRoot: '', datasetVersion: '', thaiEngine: 'pn', expectedScripts: 'thai,latin', reviewThreshold: '0.2', minIssues: '1', allowlist: '', japaneseDictionary: '', englishDictionary: '' });
   const [load, setLoad] = useState({ metadataPath: '', manifestPath: '', audioRoot: '', reviewRoot: '', reviewer: '' });
@@ -78,7 +79,22 @@ function App() {
     }
   };
 
-  useEffect(() => { void refreshJobs(); }, []);
+  useEffect(() => {
+    const initialise = async () => {
+      try {
+        const [configuration, jobData] = await Promise.all([api.configuration(), api.jobs()]);
+        setAuto(configuration.autoLabel);
+        setValidation(configuration.validation);
+        setLoad(configuration.review);
+        setJobs(jobData.jobs);
+        setConfigured(true);
+        setNotice('Ready with project-root-relative configuration from the local server.');
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
+    };
+    void initialise();
+  }, []);
   useEffect(() => {
     if (!jobs.some((job) => job.status === 'queued' || job.status === 'running')) return;
     const id = window.setInterval(() => { void refreshJobs(); }, 2000);
@@ -117,6 +133,8 @@ function App() {
     try {
       const { job } = await api.startAutoLabel({ ...auto, inputDir: cleanPath(auto.inputDir), outputDir: cleanPath(auto.outputDir), workDir: cleanPath(auto.workDir) });
       setJobs((current) => [job, ...current]);
+      setValidation((current) => ({ ...current, metadataPath: job.outputs.metadataPath, audioRoot: job.outputs.audioRoot }));
+      setLoad((current) => ({ ...current, metadataPath: job.outputs.metadataPath, audioRoot: job.outputs.audioRoot }));
       setNotice('Auto-label job started. Its output paths will appear below when it completes.');
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setBusy(null); }
@@ -134,6 +152,7 @@ function App() {
         englishDictionary: cleanPath(validation.englishDictionary) || undefined,
       });
       setJobs((current) => [job, ...current]);
+      setLoad((current) => ({ ...current, metadataPath: job.outputs.metadataPath, manifestPath: job.outputs.manifestPath, audioRoot: job.outputs.audioRoot }));
       setNotice('Validation job started with spellcheck evidence. It writes a new versioned run directory.');
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setBusy(null); }
@@ -183,7 +202,7 @@ function App() {
       {(notice || error) && <div className={`banner ${error ? 'banner--error' : ''}`} role="status"><span>{error ?? notice}</span><button type="button" aria-label="Dismiss message" onClick={() => { setNotice(null); setError(null); }}><X size={16} aria-hidden /></button></div>}
 
       {setupOpen && <section className="setup" aria-label="Dataset setup">
-        <div className="setup-intro"><span className="eyebrow">Local workflow</span><h1>Label with context, keep the source intact.</h1><p>Run the existing pipeline and validator, then open their JSONL outputs for human review. Every save is an append-only event in a new review session.</p></div>
+        <div className="setup-intro"><span className="eyebrow">Local workflow</span><h1>Label with context, keep the source intact.</h1><p>{configured ? 'Run each step in order. The local server prefilled its paths and options from the Whisper processor configuration, then carries every job output into the next step.' : 'Connecting to the local labeling server and loading the processor configuration…'}</p></div>
         <div className="setup-grid">
           <form className="setup-panel" onSubmit={(event) => { event.preventDefault(); void runAuto(); }}>
             <div className="panel-heading"><span className="panel-icon"><Sparkle size={18} /></span><div><h2>1. Auto-label audio</h2><p>Runs <code>auto-label</code> in the Whisper processor.</p></div></div>
@@ -191,7 +210,7 @@ function App() {
             <PathField label="New dataset output directory" value={auto.outputDir} onChange={(outputDir) => setAuto({ ...auto, outputDir })} placeholder="C:\datasets\labeled" />
             <PathField label="New pipeline work directory" value={auto.workDir} onChange={(workDir) => setAuto({ ...auto, workDir })} placeholder="C:\datasets\work" />
             <label className="check"><input type="checkbox" checked={auto.noOverlapFilter} onChange={(event) => setAuto({ ...auto, noOverlapFilter: event.target.checked })} /> Skip overlap filtering</label>
-            <button className="button button--primary" disabled={busy !== null} type="submit"><Play size={16} weight="fill" />{busy === 'auto' ? 'Starting…' : 'Run auto-labeling'}</button>
+            <button className="button button--primary" disabled={busy !== null || !configured} type="submit"><Play size={16} weight="fill" />{busy === 'auto' ? 'Starting…' : 'Run auto-labeling'}</button>
           </form>
 
           <form className="setup-panel" onSubmit={(event) => { event.preventDefault(); void runValidation(); }}>
@@ -202,7 +221,7 @@ function App() {
             <div className="fields fields--two"><TextField label="Thai engine" value={validation.thaiEngine} onChange={(thaiEngine) => setValidation({ ...validation, thaiEngine })} /><TextField label="Expected scripts" value={validation.expectedScripts} onChange={(expectedScripts) => setValidation({ ...validation, expectedScripts })} /></div>
             <div className="fields fields--two"><TextField label="Review threshold" value={validation.reviewThreshold} onChange={(reviewThreshold) => setValidation({ ...validation, reviewThreshold })} /><TextField label="Minimum issues" value={validation.minIssues} onChange={(minIssues) => setValidation({ ...validation, minIssues })} /></div>
             <details><summary>Optional Japanese, English, and allowlist paths</summary><PathField label="Japanese dictionary" value={validation.japaneseDictionary} onChange={(japaneseDictionary) => setValidation({ ...validation, japaneseDictionary })} placeholder="small, core, or full" /><PathField label="English frequency dictionary" value={validation.englishDictionary} onChange={(englishDictionary) => setValidation({ ...validation, englishDictionary })} placeholder="C:\dictionaries\en.txt" /><PathField label="Versioned allowlist" value={validation.allowlist} onChange={(allowlist) => setValidation({ ...validation, allowlist })} placeholder="C:\dictionaries\terms.txt" /></details>
-            <button className="button button--primary" disabled={busy !== null} type="submit"><Play size={16} weight="fill" />{busy === 'validation' ? 'Starting…' : 'Run validation'}</button>
+            <button className="button button--primary" disabled={busy !== null || !configured} type="submit"><Play size={16} weight="fill" />{busy === 'validation' ? 'Starting…' : 'Run validation'}</button>
           </form>
 
           <form className="setup-panel setup-panel--load" onSubmit={(event) => { event.preventDefault(); void loadRows(); }}>
@@ -211,10 +230,13 @@ function App() {
             <PathField label="Candidate manifest.jsonl" value={load.manifestPath} onChange={(manifestPath) => setLoad({ ...load, manifestPath })} placeholder="C:\datasets\validation-runs\...\candidate-manifest.jsonl" />
             <PathField label="Audio root" value={load.audioRoot} onChange={(audioRoot) => setLoad({ ...load, audioRoot })} placeholder="C:\datasets\labeled" />
             <div className="fields fields--two"><PathField label="New empty review output directory (optional)" value={load.reviewRoot} onChange={(reviewRoot) => setLoad({ ...load, reviewRoot })} placeholder="Defaults to a new local directory" /><TextField label="Reviewer" value={load.reviewer} onChange={(reviewer) => setLoad({ ...load, reviewer })} placeholder="Defaults to Windows user" /></div>
-            <button className="button button--primary" disabled={busy !== null} type="submit"><FileAudio size={16} weight="fill" />{busy === 'load' ? 'Loading…' : 'Open workbench'}</button>
+            <button className="button button--primary" disabled={busy !== null || !configured} type="submit"><FileAudio size={16} weight="fill" />{busy === 'load' ? 'Loading…' : 'Open workbench'}</button>
           </form>
         </div>
-        {jobs.length > 0 && <JobRail jobs={jobs} onRefresh={() => void refreshJobs()} onUseOutput={(outputs) => { setLoad((current) => ({ ...current, metadataPath: outputs.metadataPath ?? current.metadataPath, manifestPath: outputs.manifestPath ?? current.manifestPath, audioRoot: outputs.audioRoot ?? current.audioRoot })); }} />}
+        {jobs.length > 0 && <JobRail jobs={jobs} onRefresh={() => void refreshJobs()} onUseOutput={(outputs) => {
+          setValidation((current) => ({ ...current, metadataPath: outputs.metadataPath ?? current.metadataPath, audioRoot: outputs.audioRoot ?? current.audioRoot }));
+          setLoad((current) => ({ ...current, metadataPath: outputs.metadataPath ?? current.metadataPath, manifestPath: outputs.manifestPath ?? current.manifestPath, audioRoot: outputs.audioRoot ?? current.audioRoot }));
+        }} />}
       </section>}
 
       {!rows.length && !setupOpen && <section className="empty-state"><FileAudio size={36} aria-hidden /><h2>No review queue is open</h2><p>Configure a run or load a metadata and candidate manifest pair to begin.</p><button className="button button--primary" type="button" onClick={() => setSetupOpen(true)}>Open configuration</button></section>}

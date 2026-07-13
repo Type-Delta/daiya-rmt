@@ -4,9 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/dev.mjs",
     "build": "tsc --noEmit -p tsconfig.json && vite build",
-    "preview": "vite preview --host"
+    "preview": "vite preview --host",
+    "start": "node scripts/start.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

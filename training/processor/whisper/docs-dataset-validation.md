@@ -48,14 +48,14 @@ mixed-language examples.
 Install only the language adapters needed for an experiment:
 
 ```console
-pip install -e "training/processor/whisper/dataset-validation[spelling]"
+uv run --directory training/processor/whisper --extra spelling python -c "import daiya_dataset_validation"
 ```
 
 Generate spelling evidence separately so different checkers and thresholds can be
 compared without rebuilding or mutating the source dataset:
 
 ```console
-python training/processor/whisper/dataset-validation/scripts/run_spelling_validation.py \
+uv run --directory training/processor/whisper --extra spelling python training/processor/whisper/scripts/run_spelling_validation.py \
   metadata.jsonl spelling-pn.jsonl \
   --thai-engine pn \
   --japanese-dictionary core \
@@ -64,7 +64,7 @@ python training/processor/whisper/dataset-validation/scripts/run_spelling_valida
   --workers 4 \
   --max-in-flight 8
 
-python training/processor/whisper/dataset-validation/scripts/build_candidate_manifest.py \
+uv run --directory training/processor/whisper --extra spelling python training/processor/whisper/scripts/build_candidate_manifest.py \
   metadata.jsonl /dataset/root candidate-manifest-v2.jsonl \
   --dataset-version dataset-v2 \
   --spelling-results spelling-pn.jsonl \
@@ -124,5 +124,5 @@ change can be reproduced and audited.
 Run focused tests without installing dependencies:
 
 ```console
-python -m unittest discover -s training/processor/whisper/dataset-validation/tests -v
+python -m unittest discover -s training/processor/whisper/tests/dataset_validation -v
 ```

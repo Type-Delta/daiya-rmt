@@ -22,14 +22,13 @@ From this directory:
 npm install
 ```
 
-Warm the processor and validator environments from the repository root. These
-commands deliberately use `--no-project` so an unrelated broken root-workspace
-member cannot prevent the local tools from running. The server uses the same
-isolated project invocation.
+Warm the unified Whisper processor environment from the repository root. Dataset
+validation is now an optional capability of that same project, so the pipeline
+and validator share one `uv` environment.
 
 ```powershell
-uv run --no-project --with-editable training/processor/whisper auto-label --help
-uv run --no-project --with-editable "training/processor/whisper/dataset-validation[spelling]" python -c "import daiya_dataset_validation"
+uv run --directory training/processor/whisper auto-label --help
+uv run --directory training/processor/whisper --extra spelling python -c "import daiya_dataset_validation"
 ```
 
 Copy `training/processor/whisper/.env.example` to `.env` and set the API,
@@ -38,14 +37,19 @@ enabled by default. For English spellcheck, supply a SymSpell frequency
 dictionary path in the UI; for Japanese, set the dictionary level to `small`,
 `core`, or `full` in the optional fields.
 
+All paths shown in the workbench are relative to the repository root
+(`daiya-rmt`). Relative paths entered in the GUI use that same root, while an
+absolute path remains available for data stored outside the project.
+
 ## Run
 
-Start the local API first. It intentionally binds to `127.0.0.1`, so local file
-paths and review data are not exposed on the network.
+Start the development GUI with one command. It starts the local label server
+automatically, then starts Vite. The server intentionally binds to `127.0.0.1`,
+so local file paths and review data are not exposed on the network.
 
 ```powershell
 cd training/processor/whisper/web
-python server.py
+npm run dev
 ```
 
 The server rejects non-loopback hosts by default. Network exposure requires an
@@ -56,13 +60,6 @@ data:
 python server.py --host 192.168.1.20 --allow-unsafe-network-host
 ```
 
-In another terminal, start Vite:
-
-```powershell
-cd training/processor/whisper/web
-npm run dev
-```
-
 Open the printed Vite URL (normally `http://localhost:5173`). The dev server
 proxies `/api` to `http://127.0.0.1:8765`. Set `DAIYA_LABEL_SERVER` before
 running Vite only when the local API uses another port.
@@ -71,29 +68,29 @@ For a single local server after building:
 
 ```powershell
 npm run build
-python server.py
+npm start
 # http://127.0.0.1:8765
 ```
 
 ## Workflow
 
-1. In **Auto-label audio**, choose an existing input directory, a dataset output
-   path that does not exist yet, and a new or empty work directory. The paths
-   must also be separate from each other. The server runs:
+1. In **Auto-label audio**, the processor's `.env` has already supplied the
+   input, output, and work paths. Click **Run auto-labeling**. The paths must be
+   separate; the output must not exist yet and the work directory must be new or
+   empty. The server runs:
 
    ```text
-   uv run --no-project --with-editable training/processor/whisper auto-label --input-dir … --output-dir … --work-dir …
+   uv run --directory training/processor/whisper auto-label --input-dir … --output-dir … --work-dir …
    ```
 
-2. In **Validate with spellcheck**, use the resulting `metadata.jsonl` and its
-   audiofolder root. Select a new or empty validation output root. The local API runs
-   `dataset-validation/scripts/run_spelling_validation.py` followed by
-   `build_candidate_manifest.py`; both import `daiya_dataset_validation` from
-   `training/processor/whisper/dataset-validation`.
+2. In **Validate with spellcheck**, the completed auto-label outputs are already
+   carried into the form. Click **Run validation**. The local API runs
+   `scripts/run_spelling_validation.py` followed by
+   `scripts/build_candidate_manifest.py` from the same processor environment.
 
-3. Copy the completed job outputs into **Load the review queue** (or press
-   **Use outputs**). Loading creates a new versioned review directory. Supply a
-   new or empty review output directory if the default is not appropriate.
+3. The completed validation outputs are also carried into **Load the review
+   queue**. Click **Open workbench**. Loading creates a new versioned review
+   directory; the configured default can be overridden when needed.
 
 4. Filter every automatic disposition, including **Keep**, listen to a chunk,
    and edit or confirm the human label. **Save human review** writes a provenance

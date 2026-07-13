@@ -45,6 +45,17 @@ export interface Review {
   human: { action: 'confirmed' | 'edited' | 'skipped'; label: string };
 }
 
+export interface WorkbenchConfig {
+  projectRoot: string;
+  autoLabel: { inputDir: string; outputDir: string; workDir: string; noOverlapFilter: boolean };
+  validation: {
+    metadataPath: string; audioRoot: string; outputRoot: string; datasetVersion: string; thaiEngine: string;
+    expectedScripts: string; reviewThreshold: string; minIssues: string; allowlist: string;
+    japaneseDictionary: string; englishDictionary: string;
+  };
+  review: { metadataPath: string; manifestPath: string; audioRoot: string; reviewRoot: string; reviewer: string };
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
   const data = (await response.json()) as T & { error?: string };
@@ -53,6 +64,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  configuration: () => request<WorkbenchConfig>('/api/config'),
   jobs: () => request<{ jobs: Job[] }>('/api/jobs'),
   startAutoLabel: (payload: Record<string, unknown>) =>
     request<{ job: Job }>('/api/jobs/autolabel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),

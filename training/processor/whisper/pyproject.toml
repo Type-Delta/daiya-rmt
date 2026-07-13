@@ -19,9 +19,21 @@ dependencies = [
     "tqdm>=4.67.1",
 ]
 
+[project.optional-dependencies]
+spelling-th = ["pythainlp>=5.3,<6"]
+spelling-ja = ["sudachipy>=0.6.10,<0.7", "sudachidict-core"]
+spelling-en = ["symspellpy>=6.9,<7"]
+spelling = [
+    "pythainlp>=5.3,<6",
+    "sudachipy>=0.6.10,<0.7",
+    "sudachidict-core",
+    "symspellpy>=6.9,<7",
+]
+
 [project.scripts]
 auto-label = "daiya_whisper_pipeline.cli:main"
 web = "daiya_whisper_pipeline.web:main"
+daiya-validate-dataset = "daiya_dataset_validation.cli:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -44,4 +56,4 @@ url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/daiya_whisper_pipeline"]
+packages = ["src/daiya_whisper_pipeline", "src/daiya_dataset_validation"]

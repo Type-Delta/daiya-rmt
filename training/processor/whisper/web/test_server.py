@@ -9,12 +9,14 @@ from pathlib import Path
 
 from server import (
     RequestError,
+    as_path,
     build_auto_label_job,
     build_validation_job,
     create_session,
     is_loopback_host,
     normalise_rows,
     save_review,
+    web_configuration,
 )
 
 
@@ -116,7 +118,7 @@ class ServerTests(unittest.TestCase):
             with self.assertRaisesRegex(RequestError, "must not exist yet"):
                 build_auto_label_job({"inputDir": str(source), "outputDir": str(empty_output), "workDir": str(root / "work")})
 
-    def test_job_commands_bypass_broken_parent_workspace(self) -> None:
+    def test_job_commands_use_the_unified_processor_project(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             source = root / "source"
@@ -124,8 +126,20 @@ class ServerTests(unittest.TestCase):
             _, commands, _ = build_auto_label_job(
                 {"inputDir": str(source), "outputDir": str(root / "output"), "workDir": str(root / "work")}
             )
-            self.assertEqual(commands[0][0:3], ["uv", "run", "--no-project"])
-            self.assertIn("--with-editable", commands[0])
+            self.assertEqual(commands[0][0:4], ["uv", "run", "--directory", str(Path(__file__).resolve().parent.parent)])
+            self.assertNotIn("--with-editable", commands[0])
+
+    def test_web_configuration_prefills_the_workflow(self) -> None:
+        configuration = web_configuration()
+        self.assertTrue(configuration["autoLabel"]["inputDir"])
+        self.assertTrue(configuration["autoLabel"]["outputDir"])
+        self.assertFalse(Path(configuration["autoLabel"]["inputDir"]).is_absolute())
+        self.assertFalse(Path(configuration["autoLabel"]["outputDir"]).is_absolute())
+        self.assertEqual(configuration["validation"]["metadataPath"], f"{configuration['autoLabel']['outputDir']}/metadata.jsonl")
+        self.assertEqual(configuration["review"]["audioRoot"], configuration["autoLabel"]["outputDir"])
+
+    def test_relative_ui_paths_are_resolved_from_the_project_root(self) -> None:
+        self.assertEqual(as_path("AGENTS.md", label="fixture", directory=False), Path(__file__).resolve().parents[4] / "AGENTS.md")
 
     def test_validation_and_review_targets_must_be_separate_and_fresh(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

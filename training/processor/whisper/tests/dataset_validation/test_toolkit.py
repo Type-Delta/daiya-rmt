@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 import unittest
 
-sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).parents[2] / "src"))
 
 from daiya_dataset_validation.decision import decide
 from daiya_dataset_validation.io import write_csv, write_jsonl

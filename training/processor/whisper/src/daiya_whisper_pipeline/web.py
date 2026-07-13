@@ -16,7 +16,7 @@ def build_parser() -> argparse.ArgumentParser:
    )
    parser.add_argument(
       "script",
-      choices=("build", "dev", "preview", "install", "i"),
+      choices=("build", "dev", "start", "preview", "install", "i"),
       nargs="?",
       default="build",
       help="npm script to run in training/processor/whisper/web. Defaults to build.",

@@ -54,3 +54,10 @@ dataset = load_dataset("audiofolder", data_dir=r"C:\datasets\daiya_hf")
 ```
 
 Each metadata row includes `file_name`, `text`, LLM transcript text, language hint, source-file context before/after, source file, timestamps, and chunk duration.
+
+## Dataset validation
+
+Dataset validation now lives in this processor workspace, alongside the pipeline
+that produces `metadata.jsonl`. Its audit-oriented tools are packaged as
+`daiya_dataset_validation`; see [dataset validation notes](docs-dataset-validation.md)
+for the CLI, spelling adapters, and manifest workflow.

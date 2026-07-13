@@ -28,7 +28,6 @@ from uuid import uuid4
 WEB_ROOT = Path(__file__).resolve().parent
 WHISPER_ROOT = WEB_ROOT.parent
 REPOSITORY_ROOT = WEB_ROOT.parents[3]
-VALIDATION_ROOT = WHISPER_ROOT / "dataset-validation"
 APP_VERSION = "daiya-labeling-workbench/0.1.0"
 MAX_REQUEST_BODY_BYTES = 1024 * 1024
 
@@ -39,6 +38,81 @@ class RequestError(ValueError):
 
 class RequestTooLarge(RequestError):
     """A request body larger than the local API accepts."""
+
+
+def read_processor_environment() -> dict[str, str]:
+    """Read the processor's local configuration without importing its dependencies."""
+
+    values: dict[str, str] = {}
+    env_file = WHISPER_ROOT / ".env"
+    if env_file.is_file():
+        for raw_line in env_file.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip().strip("\"'")
+    values.update({key: value for key, value in os.environ.items() if key.startswith(("DAIYA_", "OPENROUTER_"))})
+    return values
+
+
+def configured_path(environment: dict[str, str], name: str, default: str) -> Path:
+    value = Path(environment.get(name, default)).expanduser()
+    return value.resolve() if value.is_absolute() else (WHISPER_ROOT / value).resolve()
+
+
+def project_relative_path(path: Path) -> str:
+    """Display project files relative to the repository root when possible."""
+
+    try:
+        return path.resolve().relative_to(REPOSITORY_ROOT.resolve()).as_posix() or "."
+    except ValueError:
+        return str(path.resolve())
+
+
+def configured_optional_path(environment: dict[str, str], name: str) -> str:
+    value = environment.get(name, "").strip()
+    return project_relative_path(configured_path(environment, name, "")) if value else ""
+
+
+def web_configuration() -> dict[str, Any]:
+    """Return GUI defaults from the same .env configuration the processor uses."""
+
+    environment = read_processor_environment()
+    input_dir = configured_path(environment, "DAIYA_INPUT_DIR", "../../dataset/raw")
+    output_dir = configured_path(environment, "DAIYA_OUTPUT_DIR", "output/hf_dataset")
+    work_dir = configured_path(environment, "DAIYA_WORK_DIR", "work")
+    validation_root = configured_path(environment, "DAIYA_VALIDATION_OUTPUT_DIR", "output/validation")
+    review_root = configured_path(environment, "DAIYA_REVIEW_OUTPUT_DIR", "web/human-reviews")
+    return {
+        "projectRoot": ".",
+        "autoLabel": {
+            "inputDir": project_relative_path(input_dir),
+            "outputDir": project_relative_path(output_dir),
+            "workDir": project_relative_path(work_dir),
+            "noOverlapFilter": environment.get("DAIYA_ENABLE_OVERLAP_FILTER", "true").strip().lower() in {"0", "false", "no", "off"},
+        },
+        "validation": {
+            "metadataPath": project_relative_path(output_dir / "metadata.jsonl"),
+            "audioRoot": project_relative_path(output_dir),
+            "outputRoot": project_relative_path(validation_root),
+            "datasetVersion": environment.get("DAIYA_VALIDATION_DATASET_VERSION", f"local-{datetime.now().date().isoformat()}"),
+            "thaiEngine": environment.get("DAIYA_VALIDATION_THAI_ENGINE", "pn"),
+            "expectedScripts": environment.get("DAIYA_VALIDATION_EXPECTED_SCRIPTS", "thai,latin"),
+            "reviewThreshold": environment.get("DAIYA_VALIDATION_REVIEW_THRESHOLD", "0.2"),
+            "minIssues": environment.get("DAIYA_VALIDATION_MIN_ISSUES", "1"),
+            "allowlist": configured_optional_path(environment, "DAIYA_VALIDATION_ALLOWLIST"),
+            "japaneseDictionary": environment.get("DAIYA_VALIDATION_JAPANESE_DICTIONARY", ""),
+            "englishDictionary": configured_optional_path(environment, "DAIYA_VALIDATION_ENGLISH_DICTIONARY"),
+        },
+        "review": {
+            "metadataPath": project_relative_path(output_dir / "metadata.jsonl"),
+            "manifestPath": "",
+            "audioRoot": project_relative_path(output_dir),
+            "reviewRoot": project_relative_path(review_root),
+            "reviewer": environment.get("DAIYA_REVIEWER", os.getenv("USERNAME", "local-reviewer")),
+        },
+    }
 
 
 def iso_now() -> str:
@@ -68,7 +142,8 @@ def digest(path: Path) -> str:
 def as_path(value: object, *, label: str, must_exist: bool = True, directory: bool | None = None) -> Path:
     if not isinstance(value, str) or not value.strip():
         raise RequestError(f"{label} is required.")
-    path = Path(value).expanduser().resolve()
+    candidate = Path(value).expanduser()
+    path = candidate.resolve() if candidate.is_absolute() else (REPOSITORY_ROOT / candidate).resolve()
     if must_exist and not path.exists():
         raise RequestError(f"{label} does not exist: {path}")
     if directory is True and path.exists() and not path.is_dir():
@@ -229,7 +304,8 @@ class AppState:
             job = self.jobs[job_id]
             job["status"] = "running"
         for command in job["commands"]:
-            self._append_log(job_id, "$ " + subprocess.list2cmdline(command))
+            displayed_command = [project_relative_path(Path(part)) if Path(part).is_absolute() else part for part in command]
+            self._append_log(job_id, "$ " + subprocess.list2cmdline(displayed_command))
             try:
                 process = subprocess.Popen(command, cwd=REPOSITORY_ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
             except OSError as exc:
@@ -401,10 +477,10 @@ def build_auto_label_job(payload: dict[str, Any]) -> tuple[str, list[list[str]],
     require_separate_paths(first=output_dir, second=work_dir, first_name="dataset output directory", second_name="pipeline work directory")
     require_absent_directory(output_dir, label="dataset output directory")
     require_fresh_directory(work_dir, label="pipeline work directory")
-    command = ["uv", "run", "--no-project", "--with-editable", str(WHISPER_ROOT), "auto-label", "--input-dir", str(input_dir), "--output-dir", str(output_dir), "--work-dir", str(work_dir)]
+    command = ["uv", "run", "--directory", str(WHISPER_ROOT), "auto-label", "--input-dir", str(input_dir), "--output-dir", str(output_dir), "--work-dir", str(work_dir)]
     if bool(payload.get("noOverlapFilter")):
         command.append("--no-overlap-filter")
-    return "Auto-label audio", [command], {"metadataPath": str(output_dir / "metadata.jsonl"), "audioRoot": str(output_dir)}
+    return "Auto-label audio", [command], {"metadataPath": project_relative_path(output_dir / "metadata.jsonl"), "audioRoot": project_relative_path(output_dir)}
 
 
 def build_validation_job(payload: dict[str, Any]) -> tuple[str, list[list[str]], dict[str, str]]:
@@ -423,7 +499,7 @@ def build_validation_job(payload: dict[str, Any]) -> tuple[str, list[list[str]],
     english = payload.get("englishDictionary")
     if thai_engine not in {"pn", "symspellpy", "phunspell", "none"}:
         raise RequestError("Thai spellcheck engine is not supported.")
-    spell_command = ["uv", "run", "--no-project", "--with-editable", f"{VALIDATION_ROOT}[spelling]", "python", str(VALIDATION_ROOT / "scripts" / "run_spelling_validation.py"), str(metadata), str(spelling)]
+    spell_command = ["uv", "run", "--directory", str(WHISPER_ROOT), "--extra", "spelling", "python", str(WHISPER_ROOT / "scripts" / "run_spelling_validation.py"), str(metadata), str(spelling)]
     if thai_engine != "none":
         spell_command += ["--thai-engine", thai_engine]
     if japanese:
@@ -436,13 +512,19 @@ def build_validation_job(payload: dict[str, Any]) -> tuple[str, list[list[str]],
         spell_command += ["--allowlist", str(as_path(payload["allowlist"], label="allowlist", directory=False))]
     spell_command += ["--review-threshold", str(payload.get("reviewThreshold") or 0.2), "--min-issues", str(payload.get("minIssues") or 1)]
     dataset_version = str(payload.get("datasetVersion") or f"local-{datetime.now().date().isoformat()}")
-    manifest_command = ["uv", "run", "--no-project", "--with-editable", str(VALIDATION_ROOT), "python", str(VALIDATION_ROOT / "scripts" / "build_candidate_manifest.py"), str(metadata), str(audio_root), str(manifest), "--dataset-version", dataset_version, "--spelling-results", str(spelling), "--spelling-review-threshold", str(payload.get("reviewThreshold") or 0.2), "--spelling-min-issues", str(payload.get("minIssues") or 1)]
+    manifest_command = ["uv", "run", "--directory", str(WHISPER_ROOT), "--extra", "spelling", "python", str(WHISPER_ROOT / "scripts" / "build_candidate_manifest.py"), str(metadata), str(audio_root), str(manifest), "--dataset-version", dataset_version, "--spelling-results", str(spelling), "--spelling-review-threshold", str(payload.get("reviewThreshold") or 0.2), "--spelling-min-issues", str(payload.get("minIssues") or 1)]
     scripts = payload.get("expectedScripts")
     if isinstance(scripts, list):
         for script in scripts:
             if str(script).strip():
                 manifest_command += ["--expected-script", str(script).strip()]
-    return "Validate labels and spelling", [spell_command, manifest_command], {"metadataPath": str(metadata), "audioRoot": str(audio_root), "manifestPath": str(manifest), "spellingPath": str(spelling), "runDirectory": str(run_dir)}
+    return "Validate labels and spelling", [spell_command, manifest_command], {
+        "metadataPath": project_relative_path(metadata),
+        "audioRoot": project_relative_path(audio_root),
+        "manifestPath": project_relative_path(manifest),
+        "spellingPath": project_relative_path(spelling),
+        "runDirectory": project_relative_path(run_dir),
+    }
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -484,7 +566,9 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         try:
             if parsed.path == "/api/health":
-                self.send_json(HTTPStatus.OK, {"ok": True, "version": APP_VERSION, "validationRoot": str(VALIDATION_ROOT)})
+                self.send_json(HTTPStatus.OK, {"ok": True, "version": APP_VERSION, "processorRoot": str(WHISPER_ROOT)})
+            elif parsed.path == "/api/config":
+                self.send_json(HTTPStatus.OK, web_configuration())
             elif parsed.path == "/api/jobs":
                 self.send_json(HTTPStatus.OK, {"jobs": STATE.job_list()})
             elif parsed.path == "/api/audio":
@@ -520,7 +604,9 @@ class Handler(BaseHTTPRequestHandler):
                 rows = normalise_rows(metadata, manifest, audio_root)
                 session = create_session(payload, metadata, manifest, audio_root, rows)
                 STATE.add_session(session, audio_root)
-                self.send_json(HTTPStatus.OK, {"rows": rows, "session": {key: value for key, value in session.items() if key not in {"reviews", "rows", "lock"}}})
+                public_session = {key: value for key, value in session.items() if key not in {"reviews", "rows", "lock"}}
+                public_session["directory"] = project_relative_path(Path(session["directory"]))
+                self.send_json(HTTPStatus.OK, {"rows": rows, "session": public_session})
             elif self.path == "/api/review/save":
                 session_id = str(payload.get("sessionId") or "")
                 session = STATE.get_session(session_id)
