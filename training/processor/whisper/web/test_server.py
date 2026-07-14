@@ -28,6 +28,7 @@ def loaded_row(row_id: str = "row-1") -> dict[str, object]:
         "id": row_id,
         "sourceUri": "train/clip.wav",
         "audioPath": "C:/audio/clip.wav",
+        "audioSha256": "0" * 64,
         "disposition": "keep",
         "originalLabel": "original",
         "proposedLabel": None,
@@ -216,13 +217,12 @@ class ServerTests(unittest.TestCase):
                     "row": {"id": "row-1", "sourceUri": "spoofed.wav", "originalLabel": "spoofed"},
                 },
             )
-            self.assertEqual(event["source"]["source_uri"], "train/clip.wav")
-            self.assertEqual(event["automatic"]["original_label"], "original")
+            self.assertEqual(event["chunk"]["audio_sha256"], "0" * 64)
             self.assertEqual(event["human"]["label"], "corrected")
             with self.assertRaisesRegex(RequestError, "not part of this active session"):
                 save_review(session, {"rowId": "unknown", "text": "x", "action": "edited"})
 
-    def test_concurrent_saves_keep_append_log_and_projection_consistent(self) -> None:
+    def test_concurrent_saves_keep_one_current_record_per_chunk(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)
             rows = [loaded_row(f"row-{index}") for index in range(24)]
@@ -234,11 +234,9 @@ class ServerTests(unittest.TestCase):
                         rows,
                     )
                 )
-            saved_events = [json.loads(line) for line in (directory / "reviews.jsonl").read_text(encoding="utf-8").splitlines()]
-            projection = json.loads((directory / "current-reviews.json").read_text(encoding="utf-8"))
-            self.assertEqual(len(saved_events), len(rows))
-            self.assertEqual(set(projection), {str(row["id"]) for row in rows})
-            self.assertEqual({event["event_id"] for event in saved_events}, {event["event_id"] for event in events})
+            saved_reviews = [json.loads(line) for line in (directory / "reviews.jsonl").read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(len(saved_reviews), 1)
+            self.assertEqual(saved_reviews[0]["schema_version"], "daiya-human-review-2")
             self.assertFalse(any(path.suffix == ".tmp" for path in directory.iterdir()))
 
     def test_loopback_hosts_require_no_unsafe_opt_in(self) -> None:

@@ -8,8 +8,8 @@ writes human review decisions as a separate append-only artifact.
 It does not write source audio, `metadata.jsonl`, or a candidate manifest. The
 pipeline and validation tools each write their own new outputs; every loaded
 queue creates a fresh timestamped `human-review-*` directory containing
-`session.json`, append-only `reviews.jsonl`, and a latest-state
-`current-reviews.json` projection. The active review session and loaded rows
+`session.json` and a deduplicated `reviews.jsonl` file with one latest decision
+per audio chunk. The active review session and loaded rows
 are intentionally memory-only: after the API server stops, start a new session
 and use the saved artifacts as the durable record rather than expecting an
 in-app resume.
@@ -96,8 +96,7 @@ npm start
    queue**. Click **Open workbench**. Loading creates a new versioned review
    directory; the configured default can be overridden when needed. To resume a
    paused review, use its existing review directory along with the same metadata
-   and candidate manifest. Saved decisions are restored from
-   `current-reviews.json`.
+   and candidate manifest. Saved decisions are restored from `reviews.jsonl`.
 
 4. Filter every automatic disposition, including **Keep**, listen to a chunk,
    and edit or confirm the human label. **Save human review** writes a provenance
@@ -115,6 +114,9 @@ configuration fields are saved locally in the browser, so returning to `/` after
 closing a tab retains the paths needed to reopen the workbench. Once a queue has
 been opened, reloading `/workbench` restores its saved review directory
 automatically, along with the last selected chunk for that review directory.
+Use **Import / export** beside **Configure** to exchange `reviews.jsonl` files;
+imports match audio content rather than local paths and present a global choice
+for conflicts.
 
 The source root is deliberately rejected as an auto-label output, pipeline work,
 validation output, or review output location, including equal and

@@ -13,6 +13,7 @@ import {
   CaretLeftIcon,
   CaretRightIcon,
   CheckIcon,
+  DownloadSimpleIcon,
   FileAudioIcon,
   FloppyDiskIcon,
   FolderOpenIcon,
@@ -23,11 +24,12 @@ import {
   ShieldCheckIcon,
   SparkleIcon,
   StopIcon,
+  UploadSimpleIcon,
   WarningCircleIcon,
   WaveformIcon,
   XIcon,
 } from "@phosphor-icons/react";
-import { api, audioUrl, type Job, type LabelRow, type Session } from "./api";
+import { api, audioUrl, reviewExportUrl, type ImportSummary, type Job, type LabelRow, type Session } from "./api";
 
 type Filter =
   "all" | "keep" | "review" | "correct" | "drop" | "reviewed" | "unreviewed";
@@ -123,6 +125,7 @@ type AppAction =
   | { type: "queryChanged"; query: string }
   | { type: "filtersCleared" }
   | { type: "reviewSaved"; rowId: string; review: ReviewState; notice: string }
+  | { type: "reviewsImported"; reviews: Record<string, ReviewState>; notice: string }
   | { type: "jobOutputsUsed"; outputs: Job["outputs"] };
 
 const SETUP_STORAGE_KEY = "daiya-labeling-setup-v1";
@@ -332,6 +335,8 @@ function appReducer(state: AppState, action: AppAction): AppState {
         reviews: { ...state.reviews, [action.rowId]: action.review },
         notice: action.notice,
       };
+    case "reviewsImported":
+      return { ...state, reviews: action.reviews, notice: action.notice };
     case "jobOutputsUsed":
       return {
         ...state,
@@ -604,6 +609,7 @@ function useAppController() {
       window.location.pathname === "/workbench" && Boolean(INITIAL_ACTIVE_REVIEW),
   );
   const [dropChunk, setDropChunk] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const labelRef = useRef<HTMLTextAreaElement | null>(null);
   const mainPanelRef = useRef<HTMLElement | null>(null);
@@ -989,6 +995,21 @@ function useAppController() {
     }
   };
 
+  const previewReviewImport = async (content: string) => {
+    if (!session) throw new Error("Open a review queue before importing.");
+    return api.previewReviewImport({ sessionId: session.id, content });
+  };
+  const applyReviewImport = async (content: string, conflictPolicy: "ours" | "theirs") => {
+    if (!session) throw new Error("Open a review queue before importing.");
+    const result = await api.applyReviewImport({ sessionId: session.id, content, conflictPolicy });
+    dispatch({
+      type: "reviewsImported",
+      reviews: result.reviews,
+      notice: `Imported ${result.summary.new} new review${result.summary.new === 1 ? "" : "s"}; ${result.summary.conflicts} conflict${result.summary.conflicts === 1 ? "" : "s"} resolved with ${conflictPolicy === "ours" ? "ours" : "theirs"}.`,
+    });
+    return result;
+  };
+
   const selectRelative = (delta: number) => {
     const target = visibleRows[selectedVisibleIndex + delta];
     if (target)
@@ -1120,6 +1141,7 @@ function useAppController() {
     validation,
     load,
     restoringWorkbench,
+    transferOpen,
     selected,
     automaticText,
     hasUnsavedChange,
@@ -1152,6 +1174,9 @@ function useAppController() {
     useJobOutputs,
     changeDraft,
     setDropChunk,
+    setTransferOpen,
+    previewReviewImport,
+    applyReviewImport,
   };
 }
 
@@ -1196,6 +1221,7 @@ function App() {
       <AppHeader controller={controller} />
 
       <AppMessage controller={controller} />
+      <ReviewTransferDialog controller={controller} />
 
       {page === "configure" && <ConfigurationPage controller={controller} />}
 
@@ -1436,7 +1462,7 @@ function App() {
 }
 
 function AppHeader({ controller }: { controller: AppController }) {
-  const { page, session, reviewCount, rows, navigate } = controller;
+  const { page, session, reviewCount, rows, navigate, setTransferOpen } = controller;
   return (
     <header className="sticky top-0 z-10 flex min-h-[58px] items-center justify-between gap-4 border-b border-edge bg-[color-mix(in_oklch,var(--bg)_92%,var(--surface))] px-5 py-2.5 max-[780px]:px-3.5">
       <div className="flex items-center gap-2 text-sm tracking-[-0.01em]">
@@ -1477,6 +1503,15 @@ function AppHeader({ controller }: { controller: AppController }) {
           <button
             className="button button--secondary"
             type="button"
+            onClick={() => setTransferOpen(true)}
+          >
+            <UploadSimpleIcon size={17} aria-hidden /> Import / export
+          </button>
+        )}
+        {page === "workbench" && (
+          <button
+            className="button button--secondary"
+            type="button"
             onClick={() => navigate("/")}
           >
             <GearSixIcon size={17} aria-hidden /> Configure
@@ -1484,6 +1519,44 @@ function AppHeader({ controller }: { controller: AppController }) {
         )}
       </div>
     </header>
+  );
+}
+
+function ReviewTransferDialog({ controller }: { controller: AppController }) {
+  const { session, transferOpen, setTransferOpen, previewReviewImport, applyReviewImport } = controller;
+  const [content, setContent] = useState<string | null>(null);
+  const [fileName, setFileName] = useState("");
+  const [summary, setSummary] = useState<ImportSummary | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!transferOpen || !session) return null;
+  const close = () => { setTransferOpen(false); setContent(null); setFileName(""); setSummary(null); setError(null); };
+  const chooseFile = async (file: File | undefined) => {
+    if (!file) return;
+    setBusy(true); setError(null); setSummary(null);
+    try {
+      const nextContent = await file.text();
+      const result = await previewReviewImport(nextContent);
+      setContent(nextContent); setFileName(file.name); setSummary(result.summary);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setBusy(false); }
+  };
+  const apply = async (conflictPolicy: "ours" | "theirs") => {
+    if (!content) return;
+    setBusy(true); setError(null);
+    try { await applyReviewImport(content, conflictPolicy); close(); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="transfer-backdrop" role="presentation" onMouseDown={close}>
+      <section className="transfer-dialog" role="dialog" aria-modal="true" aria-labelledby="review-transfer-title" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="transfer-heading"><div><h2 id="review-transfer-title">Review transfer</h2><p>Export current decisions or merge a colleague’s <code>reviews.jsonl</code>.</p></div><button className="icon-button" type="button" onClick={close} aria-label="Close review transfer"><XIcon size={17} /></button></div>
+        <div className="transfer-actions"><a className="button button--secondary" href={reviewExportUrl(session.id)}><DownloadSimpleIcon size={17} /> Export reviews</a><label className="button button--primary"><UploadSimpleIcon size={17} /> {busy ? "Reading…" : "Choose reviews.jsonl"}<input className="sr-only" type="file" accept=".jsonl,application/x-ndjson,application/json" onChange={(event) => void chooseFile(event.target.files?.[0])} /></label></div>
+        {error && <p className="transfer-error" role="alert">{error}</p>}
+        {summary && <div className="transfer-summary"><strong>{fileName}</strong><p>{summary.imported} unique review{summary.imported === 1 ? "" : "s"}: {summary.new} new, {summary.unchanged} unchanged, {summary.conflicts} conflict{summary.conflicts === 1 ? "" : "s"}, {summary.unmatched} unmatched.</p>{summary.conflicts > 0 ? <div className="transfer-resolve"><span>For every conflict:</span><button className="button button--secondary" type="button" disabled={busy} onClick={() => void apply("ours")}>Keep all ours</button><button className="button button--primary" type="button" disabled={busy} onClick={() => void apply("theirs")}>Keep all theirs</button></div> : <button className="button button--primary" type="button" disabled={busy} onClick={() => void apply("ours")}>Import matched reviews</button>}</div>}
+      </section>
+    </div>
   );
 }
 
@@ -1826,7 +1899,7 @@ function TextField({
 }) {
   return (
     <label className="field">
-      <span>{label}</span>
+      <div className="mb-1">{label}</div>
       <input
         value={value}
         onChange={(event) => onChange(event.target.value)}
@@ -1885,8 +1958,8 @@ function PathField({
   };
   return (
     <label className="field">
-      <span>{label}</span>
-      <span className="field-control">
+      <div className="mb-1">{label}</div>
+      <div className="field-control">
         <input
           className={state && !state.valid ? "is-invalid" : ""}
           value={value}
@@ -1903,7 +1976,7 @@ function PathField({
         >
           <FolderOpenIcon size={16} aria-hidden />
         </button>
-      </span>
+      </div>
       {state && (
         <small className={state.valid ? "path-state" : "path-state is-invalid"}>
           {state.message}

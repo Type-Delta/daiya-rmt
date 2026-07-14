@@ -47,6 +47,7 @@ export interface Session {
 export interface Review {
   human: { action: 'confirmed' | 'edited' | 'skipped'; label: string };
 }
+export interface ImportSummary { imported: number; matched: number; new: number; unchanged: number; conflicts: number; unmatched: number; }
 
 export interface WorkbenchConfig {
   projectRoot: string;
@@ -78,11 +79,19 @@ export const api = {
     request<{ rows: LabelRow[]; session: Session; reviews: Record<string, Review['human']> }>('/api/dataset/load', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
   saveReview: (payload: Record<string, unknown>) =>
     request<{ review: Review }>('/api/review/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
+  previewReviewImport: (payload: { sessionId: string; content: string }) =>
+    request<{ summary: ImportSummary }>('/api/review/import/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
+  applyReviewImport: (payload: { sessionId: string; content: string; conflictPolicy: 'ours' | 'theirs' }) =>
+    request<{ reviews: Record<string, Review['human']>; summary: ImportSummary }>('/api/review/import/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
   validatePath: (payload: { path: string; kind: 'file' | 'directory'; allowMissing?: boolean }) =>
     request<{ valid: boolean; exists: boolean; path?: string; message: string }>('/api/path/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
   pickPath: (payload: { kind: 'file' | 'directory'; initialPath: string }) =>
     request<{ path: string | null }>('/api/path/pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
 };
+
+export function reviewExportUrl(sessionId: string): string {
+  return `/api/review/export?sessionId=${encodeURIComponent(sessionId)}`;
+}
 
 export function audioUrl(path: string): string {
   return `/api/audio?path=${encodeURIComponent(path)}`;
