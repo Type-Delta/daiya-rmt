@@ -988,25 +988,24 @@ function useAppController() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      const key = event.key.toLocaleLowerCase();
-      if (event.ctrlKey && key === "e") {
+      if (event.ctrlKey && event.code === "KeyE") {
         event.preventDefault();
         if (document.activeElement === labelRef.current)
           mainPanelRef.current?.focus();
         else labelRef.current?.focus();
         return;
       }
-      if (event.ctrlKey && key === "s") {
+      if (event.ctrlKey && event.code === "KeyS") {
         event.preventDefault();
         keyboardActionsRef.current.save();
         return;
       }
-      if (event.altKey && (event.key === "ArrowUp" || key === "a")) {
+      if (event.altKey && (event.code === "ArrowUp" || event.code === "KeyA")) {
         event.preventDefault();
         keyboardActionsRef.current.selectRelative(-1);
         return;
       }
-      if (event.altKey && (event.key === "ArrowDown" || key === "d")) {
+      if (event.altKey && (event.code === "ArrowDown" || event.code === "KeyD")) {
         event.preventDefault();
         keyboardActionsRef.current.selectRelative(1);
         return;
@@ -1024,7 +1023,7 @@ function useAppController() {
         return;
       }
       if (
-        event.key === " " &&
+        event.code === "Space" &&
         !editing
       ) {
         event.preventDefault();
