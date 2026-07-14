@@ -114,6 +114,7 @@ type AppAction =
       session: Session;
       reviews: Record<string, ReviewState>;
       load: ReviewSetup;
+      selectedId: string | null;
       notice: string;
     }
   | { type: "selectionChanged"; selectedId: string | null }
@@ -126,6 +127,7 @@ type AppAction =
 
 const SETUP_STORAGE_KEY = "daiya-labeling-setup-v1";
 const ACTIVE_REVIEW_STORAGE_KEY = "daiya-labeling-active-review-v1";
+const LAST_SELECTED_CHUNK_STORAGE_KEY = "daiya-labeling-last-selected-chunk-v1";
 const FILTERS: { id: Filter; label: string }[] = [
   { id: "all", label: "All" },
   { id: "review", label: "Review" },
@@ -183,6 +185,31 @@ function savedActiveReview(): ReviewSetup | null {
       : null;
   } catch {
     return null;
+  }
+}
+
+function savedSelectedChunk(reviewDirectory: string): string | null {
+  try {
+    const value = localStorage.getItem(LAST_SELECTED_CHUNK_STORAGE_KEY);
+    if (!value) return null;
+    const selections = JSON.parse(value) as Record<string, unknown>;
+    const selectedId = selections[reviewDirectory];
+    return typeof selectedId === "string" ? selectedId : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveSelectedChunk(reviewDirectory: string, selectedId: string) {
+  try {
+    const value = localStorage.getItem(LAST_SELECTED_CHUNK_STORAGE_KEY);
+    const selections = value ? (JSON.parse(value) as Record<string, unknown>) : {};
+    localStorage.setItem(
+      LAST_SELECTED_CHUNK_STORAGE_KEY,
+      JSON.stringify({ ...selections, [reviewDirectory]: selectedId }),
+    );
+  } catch {
+    // Selection restoration is a convenience; a blocked browser store must not interrupt review work.
   }
 }
 
@@ -285,7 +312,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
         rows: action.rows,
         session: action.session,
         reviews: action.reviews,
-        selectedId: action.rows[0]?.id ?? null,
+        selectedId: action.selectedId,
         load: action.load,
         notice: action.notice,
       };
@@ -522,6 +549,7 @@ const ClipQueue = memo(function ClipQueue({
         <MagnifyingGlassIcon size={16} aria-hidden />
         <span className="sr-only">Search labels</span>
         <input
+          className="py-3"
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
           placeholder="Search text, path, reason"
@@ -575,6 +603,7 @@ function useAppController() {
     () =>
       window.location.pathname === "/workbench" && Boolean(INITIAL_ACTIVE_REVIEW),
   );
+  const [dropChunk, setDropChunk] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const labelRef = useRef<HTMLTextAreaElement | null>(null);
   const mainPanelRef = useRef<HTMLElement | null>(null);
@@ -664,8 +693,16 @@ function useAppController() {
     ? (selected.proposedLabel ?? selected.originalLabel)
     : "";
   const savedText = selected ? reviews[selected.id]?.label : undefined;
+  const savedAction = selected ? reviews[selected.id]?.action : undefined;
+  const defaultDropChunk = Boolean(
+    selected &&
+      (savedAction === "skipped" ||
+        (!savedAction && selected.disposition === "drop")),
+  );
   const hasUnsavedChange = Boolean(
-    selected && draft !== (savedText ?? automaticText),
+    selected &&
+      (dropChunk !== defaultDropChunk ||
+        (!dropChunk && draft !== (savedText ?? automaticText))),
   );
   const filterCounts = useMemo(() => {
     const counts: Record<Filter, number> = {
@@ -784,12 +821,20 @@ function useAppController() {
       dispatch({ type: "selectionChanged", selectedId: visibleRows[0].id });
   }, [selectedId, visibleRows]);
   useEffect(() => {
-    if (selected)
+    if (selected) {
       dispatch({
         type: "draftChanged",
         draft: reviews[selected.id]?.label ?? automaticText,
       });
+      setDropChunk(
+        reviews[selected.id]?.action === "skipped" ||
+          (!reviews[selected.id] && selected.disposition === "drop"),
+      );
+    }
   }, [automaticText, reviews, selected?.id]);
+  useEffect(() => {
+    if (session && selectedId) saveSelectedChunk(session.directory, selectedId);
+  }, [selectedId, session]);
 
   const runAuto = async () => {
     dispatch({ type: "operationStarted", operation: "auto" });
@@ -865,6 +910,10 @@ function useAppController() {
         reviewer: request.reviewer || undefined,
       });
       const savedReview = { ...request, reviewRoot: data.session.directory };
+      const rememberedId = savedSelectedChunk(data.session.directory);
+      const selectedId = data.rows.some((row) => row.id === rememberedId)
+        ? rememberedId
+        : (data.rows[0]?.id ?? null);
       localStorage.setItem(ACTIVE_REVIEW_STORAGE_KEY, JSON.stringify(savedReview));
       window.history.pushState({}, "", "/workbench");
       dispatch({
@@ -873,6 +922,7 @@ function useAppController() {
         session: data.session,
         reviews: data.reviews,
         load: savedReview,
+        selectedId,
         notice: restoring || data.session.resumed
           ? `${Object.keys(data.reviews).length.toLocaleString()} saved reviews restored. You can continue where you paused.`
           : `${data.rows.length.toLocaleString()} rows loaded in a fresh review session.`,
@@ -905,7 +955,11 @@ function useAppController() {
   const save = async () => {
     if (!selected || !session) return;
     dispatch({ type: "operationStarted", operation: "save" });
-    const action = draft === selected.originalLabel ? "confirmed" : "edited";
+    const action = dropChunk
+      ? "skipped"
+      : draft === selected.originalLabel
+        ? "confirmed"
+        : "edited";
     try {
       const { review } = await api.saveReview({
         sessionId: session.id,
@@ -917,7 +971,13 @@ function useAppController() {
         type: "reviewSaved",
         rowId: selected.id,
         review: review.human,
-        notice: `${action === "edited" ? "Human edit" : "Confirmation"} saved with provenance.`,
+        notice: `${
+          action === "skipped"
+            ? "Drop decision"
+            : action === "edited"
+              ? "Human edit"
+              : "Confirmation"
+        } saved with provenance.`,
       });
     } catch (cause) {
       dispatch({
@@ -970,17 +1030,20 @@ function useAppController() {
 
   const keyboardActionsRef = useRef<{
     save: () => void;
+    toggleDropChunk: () => void;
     selectRelative: (delta: number) => void;
     seekAndPlayAudio: (position: number) => void;
     startOrStopAudio: () => void;
   }>({
     save: () => {},
+    toggleDropChunk: () => {},
     selectRelative: () => {},
     seekAndPlayAudio: () => {},
     startOrStopAudio: () => {},
   });
   keyboardActionsRef.current = {
     save: () => void save(),
+    toggleDropChunk: () => setDropChunk((checked) => !checked),
     selectRelative,
     seekAndPlayAudio,
     startOrStopAudio,
@@ -998,6 +1061,11 @@ function useAppController() {
       if (event.ctrlKey && event.code === "KeyS") {
         event.preventDefault();
         keyboardActionsRef.current.save();
+        return;
+      }
+      if (event.ctrlKey && event.code === "KeyQ") {
+        event.preventDefault();
+        keyboardActionsRef.current.toggleDropChunk();
         return;
       }
       if (event.altKey && (event.code === "ArrowUp" || event.code === "KeyA")) {
@@ -1055,6 +1123,7 @@ function useAppController() {
     selected,
     automaticText,
     hasUnsavedChange,
+    dropChunk,
     filterCounts,
     reviewCount,
     visibleRows,
@@ -1082,6 +1151,7 @@ function useAppController() {
     dismissMessage,
     useJobOutputs,
     changeDraft,
+    setDropChunk,
   };
 }
 
@@ -1103,6 +1173,7 @@ function App() {
     selected,
     automaticText,
     hasUnsavedChange,
+    dropChunk,
     filterCounts,
     visibleRows,
     selectedVisibleIndex,
@@ -1117,6 +1188,7 @@ function App() {
     changeQuery,
     selectRow,
     changeDraft,
+    setDropChunk,
   } = controller;
 
   return (
@@ -1269,6 +1341,7 @@ function App() {
                       onChange={(event) => changeDraft(event.target.value)}
                       spellCheck="false"
                       rows={7}
+                      disabled={dropChunk}
                     />
                     <div className="editor-actions">
                       <button
@@ -1278,7 +1351,15 @@ function App() {
                       >
                         Restore automatic text
                       </button>
-                      <span>Ctrl + S saves · Ctrl + E toggles audio focus</span>
+                      <span>Ctrl + S saves · Ctrl + Q toggles drop · Ctrl + E toggles audio focus</span>
+                      <label className={dropChunk ? "drop-toggle is-checked " : "drop-toggle"}>
+                        <input
+                          type="checkbox"
+                          checked={dropChunk}
+                          onChange={(event) => setDropChunk(event.target.checked)}
+                        />
+                        Drop chunk
+                      </label>
                       <button
                         className="button button--primary"
                         type="button"

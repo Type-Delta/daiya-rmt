@@ -102,17 +102,19 @@ npm start
 4. Filter every automatic disposition, including **Keep**, listen to a chunk,
    and edit or confirm the human label. **Save human review** writes a provenance
    event; it never mutates the automatic source row. `Ctrl` + `S` saves the
-   active clip. `Alt` + `Up` / `Alt` + `Down` (or `Alt` + `A` / `Alt` + `D`)
-   changes clips. `Ctrl` + `E` toggles focus between the human-label editor and
-   the main panel; from the main panel, `Space` starts the active clip from its
-   beginning, or stops and rewinds it when already playing. Outside editable
+   active clip. `Ctrl` + `Q` toggles **Drop chunk**; automatic drops start
+   checked, and unchecking it enables the human label so a reviewer can keep or
+   correct the chunk. `Alt` + `Up` / `Alt` + `Down` (or `Alt` + `A` / `Alt` +
+   `D`) changes clips. `Ctrl` + `E` toggles focus between the human-label editor
+   and the main panel; from the main panel, `Space` starts the active clip from
+   its beginning, or stops and rewinds it when already playing. Outside editable
    fields, the normal number row and numpad `0`–`9` seek and play at 0%–90%.
 
 The configuration screen is `/`; the active review screen is `/workbench`. The
 configuration fields are saved locally in the browser, so returning to `/` after
 closing a tab retains the paths needed to reopen the workbench. Once a queue has
 been opened, reloading `/workbench` restores its saved review directory
-automatically.
+automatically, along with the last selected chunk for that review directory.
 
 The source root is deliberately rejected as an auto-label output, pipeline work,
 validation output, or review output location, including equal and
