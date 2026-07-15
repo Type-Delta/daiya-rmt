@@ -124,7 +124,13 @@ type AppAction =
   | { type: "filterChanged"; filter: Filter }
   | { type: "queryChanged"; query: string }
   | { type: "filtersCleared" }
-  | { type: "reviewSaved"; rowId: string; review: ReviewState; notice: string }
+  | {
+      type: "reviewSaved";
+      rowId: string;
+      review: ReviewState;
+      reviews: Record<string, ReviewState>;
+      notice: string;
+    }
   | { type: "reviewsImported"; reviews: Record<string, ReviewState>; notice: string }
   | { type: "jobOutputsUsed"; outputs: Job["outputs"] };
 
@@ -332,11 +338,25 @@ function appReducer(state: AppState, action: AppAction): AppState {
     case "reviewSaved":
       return {
         ...state,
-        reviews: { ...state.reviews, [action.rowId]: action.review },
+        // The saved record is durable before this action is dispatched. Keep it
+        // visible even when the portable JSONL projection cannot yet match it
+        // back to the currently loaded row.
+        reviews: { ...state.reviews, ...action.reviews, [action.rowId]: action.review },
+        rows: state.rows.map((row) =>
+          row.id === action.rowId ? { ...row, reviewed: true } : row,
+        ),
         notice: action.notice,
       };
     case "reviewsImported":
-      return { ...state, reviews: action.reviews, notice: action.notice };
+      return {
+        ...state,
+        reviews: action.reviews,
+        rows: state.rows.map((row) => ({
+          ...row,
+          reviewed: Boolean(action.reviews[row.id]),
+        })),
+        notice: action.notice,
+      };
     case "jobOutputsUsed":
       return {
         ...state,
@@ -388,11 +408,13 @@ function Disposition({ value }: { value: string }) {
 const ClipRow = memo(function ClipRow({
   row,
   review,
+  reviewed,
   selected,
   onSelect,
 }: {
   row: LabelRow;
   review: ReviewState | undefined;
+  reviewed: boolean;
   selected: boolean;
   onSelect: (id: string) => void;
 }) {
@@ -411,7 +433,7 @@ const ClipRow = memo(function ClipRow({
       </span>
       <span className="clip-meta">
         {formatDuration(row.duration)} · {row.language}
-        {review && <CheckIcon size={14} weight="bold" aria-label="Reviewed" />}
+        {reviewed && <CheckIcon size={14} weight="bold" aria-label="Reviewed" />}
       </span>
     </button>
   );
@@ -497,6 +519,7 @@ const VirtualClipList = memo(function VirtualClipList({
               <ClipRow
                 row={row}
                 review={reviews[row.id]}
+                reviewed={row.reviewed}
                 selected={row.id === selectedId}
                 onSelect={onSelect}
               />
@@ -717,7 +740,7 @@ function useAppController() {
       review: 0,
       correct: 0,
       drop: 0,
-      reviewed: Object.keys(reviews).length,
+      reviewed: rows.filter((row) => row.reviewed).length,
       unreviewed: 0,
     };
     for (const row of rows) {
@@ -737,7 +760,7 @@ function useAppController() {
   const visibleRows = useMemo(
     () =>
       rows.filter((row) => {
-        const reviewed = Boolean(reviews[row.id]);
+        const reviewed = row.reviewed;
         const filterMatch =
           filter === "all" ||
           (filter === "reviewed" && reviewed) ||
@@ -748,6 +771,8 @@ function useAppController() {
           filterMatch &&
           (!needle ||
             [
+              String(row.index),
+              String(row.index).padStart(4, "0"),
               row.sourceUri,
               row.originalLabel,
               row.proposedLabel ?? "",
@@ -967,7 +992,7 @@ function useAppController() {
         ? "confirmed"
         : "edited";
     try {
-      const { review } = await api.saveReview({
+      const result = await api.saveReview({
         sessionId: session.id,
         rowId: selected.id,
         text: draft,
@@ -976,7 +1001,8 @@ function useAppController() {
       dispatch({
         type: "reviewSaved",
         rowId: selected.id,
-        review: review.human,
+        review: result.review.human,
+        reviews: result.reviews ?? {},
         notice: `${
           action === "skipped"
             ? "Drop decision"

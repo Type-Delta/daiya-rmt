@@ -22,6 +22,7 @@ export interface LabelRow {
   evidence: Evidence[];
   sourceStart: number | null;
   sourceEnd: number | null;
+  reviewed: boolean;
 }
 
 export interface Job {
@@ -78,7 +79,7 @@ export const api = {
   loadDataset: (payload: Record<string, unknown>) =>
     request<{ rows: LabelRow[]; session: Session; reviews: Record<string, Review['human']> }>('/api/dataset/load', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
   saveReview: (payload: Record<string, unknown>) =>
-    request<{ review: Review }>('/api/review/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
+    request<{ review: Review; reviews?: Record<string, Review['human']> }>('/api/review/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
   previewReviewImport: (payload: { sessionId: string; content: string }) =>
     request<{ summary: ImportSummary }>('/api/review/import/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
   applyReviewImport: (payload: { sessionId: string; content: string; conflictPolicy: 'ours' | 'theirs' }) =>

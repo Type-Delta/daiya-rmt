@@ -140,28 +140,51 @@ def digest(path: Path) -> str:
     return hasher.hexdigest()
 
 
-def chunk_key(audio_sha256: str, source_start: object, source_end: object) -> str:
-    return f"{audio_sha256}:{source_start if source_start is not None else ''}:{source_end if source_end is not None else ''}"
+def chunk_key(audio_sha256: str, source_start: object, source_end: object, source_uri: object = None) -> str:
+    """Create a portable chunk identity.
+
+    Audio content alone is not enough: datasets can contain multiple chunks
+    with identical audio bytes. Schema v3 therefore adds the source URI while
+    retaining a v2-compatible key when a record has no URI.
+    """
+
+    uri = str(source_uri or "").replace("\\", "/")
+    return f"{audio_sha256}:{source_start if source_start is not None else ''}:{source_end if source_end is not None else ''}:{uri}"
 
 
 def row_chunk_key(row: dict[str, Any]) -> str | None:
     existing_hash = row.get("audioSha256")
     if isinstance(existing_hash, str) and re.fullmatch(r"[0-9a-f]{64}", existing_hash):
-        return chunk_key(existing_hash, row.get("sourceStart"), row.get("sourceEnd"))
+        return chunk_key(existing_hash, row.get("sourceStart"), row.get("sourceEnd"), row.get("sourceUri"))
     audio_path = row.get("audioPath")
     if not isinstance(audio_path, str) or not audio_path:
         return None
-    return chunk_key(digest(Path(audio_path)), row.get("sourceStart"), row.get("sourceEnd"))
+    return chunk_key(digest(Path(audio_path)), row.get("sourceStart"), row.get("sourceEnd"), row.get("sourceUri"))
+
+
+def legacy_row_chunk_key(row: dict[str, Any]) -> str | None:
+    """Return the pre-v3 identity for reading imported schema-v2 records."""
+
+    identity = row_chunk_key(row)
+    if identity is None:
+        return None
+    audio_sha256, source_start, source_end, _ = identity.split(":", 3)
+    return chunk_key(audio_sha256, source_start or None, source_end or None)
 
 
 def review_record(row: dict[str, Any], human: dict[str, Any], reviewer: str, saved_at: str | None = None) -> dict[str, Any]:
     identity = row_chunk_key(row)
     if identity is None:
         raise RequestError("This chunk has no local audio file, so it cannot be stored as a portable review.")
-    audio_sha256, source_start, source_end = identity.split(":", 2)
+    audio_sha256, source_start, source_end, source_uri = identity.split(":", 3)
     return {
-        "schema_version": "daiya-human-review-2",
-        "chunk": {"audio_sha256": audio_sha256, "source_start": source_start or None, "source_end": source_end or None},
+        "schema_version": "daiya-human-review-3",
+        "chunk": {
+            "audio_sha256": audio_sha256,
+            "source_start": source_start or None,
+            "source_end": source_end or None,
+            "source_uri": source_uri or None,
+        },
         "saved_at": saved_at or iso_now(),
         "reviewer": reviewer,
         "human": {"action": human["action"], "label": human["label"]},
@@ -175,7 +198,7 @@ def review_key(record: dict[str, Any]) -> str | None:
     audio_sha256 = chunk.get("audio_sha256")
     if not isinstance(audio_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", audio_sha256):
         return None
-    return chunk_key(audio_sha256, chunk.get("source_start"), chunk.get("source_end"))
+    return chunk_key(audio_sha256, chunk.get("source_start"), chunk.get("source_end"), chunk.get("source_uri"))
 
 
 def parse_reviews_jsonl_text(text: str) -> dict[str, dict[str, Any]]:
@@ -187,7 +210,7 @@ def parse_reviews_jsonl_text(text: str) -> dict[str, dict[str, Any]]:
             record = json.loads(line)
         except json.JSONDecodeError as exc:
             raise RequestError(f"reviews.jsonl:{line_number} is not valid JSON: {exc.msg}") from exc
-        if not isinstance(record, dict) or record.get("schema_version") != "daiya-human-review-2":
+        if not isinstance(record, dict) or record.get("schema_version") not in {"daiya-human-review-2", "daiya-human-review-3"}:
             raise RequestError(f"reviews.jsonl:{line_number} is not a supported Daiya review record.")
         key = review_key(record)
         human = record.get("human")
@@ -575,9 +598,10 @@ def create_session(
         "id": uuid4().hex,
         "directory": str(directory),
         "reviewer": reviewer,
-        "reviews": {},
         "rows": canonical_rows,
         "rows_by_key": {key: row_id for row_id, row in canonical_rows.items() if (key := row_chunk_key(row))},
+        "legacy_rows_by_key": {key: row_id for row_id, row in canonical_rows.items() if (key := legacy_row_chunk_key(row))},
+        "rows_by_uri": {str(row.get("sourceUri") or "").replace("\\", "/"): row_id for row_id, row in canonical_rows.items() if row.get("sourceUri")},
         "lock": threading.Lock(),
         "meta": metadata,
         "resumed": False,
@@ -604,6 +628,7 @@ def resume_session(directory: Path, metadata_path: Path, manifest_path: Path | N
         raise RequestError("The selected candidate manifest does not match the existing review session.")
     canonical_rows = {str(row["id"]): dict(row) for row in rows}
     rows_by_key = {key: row_id for row_id, row in canonical_rows.items() if (key := row_chunk_key(row))}
+    legacy_rows_by_key = {key: row_id for row_id, row in canonical_rows.items() if (key := legacy_row_chunk_key(row))}
     reviews_file = directory / "reviews.jsonl"
     if metadata.get("schema_version") == "daiya-human-review-session-1":
         legacy_projection = directory / "current-reviews.json"
@@ -633,15 +658,14 @@ def resume_session(directory: Path, metadata_path: Path, manifest_path: Path | N
         atomic_json(session_file, metadata)
     if not reviews_file.is_file():
         raise RequestError("Review session is missing reviews.jsonl.")
-    persisted_reviews = parse_reviews_jsonl_text(reviews_file.read_text(encoding="utf-8"))
-    restored_reviews = {rows_by_key[key]: record for key, record in persisted_reviews.items() if key in rows_by_key}
     return {
         "id": uuid4().hex,
         "directory": str(directory),
         "reviewer": str(metadata.get("reviewer") or os.getenv("USERNAME") or "local-reviewer"),
-        "reviews": restored_reviews,
         "rows": canonical_rows,
         "rows_by_key": rows_by_key,
+        "legacy_rows_by_key": legacy_rows_by_key,
+        "rows_by_uri": {str(row.get("sourceUri") or "").replace("\\", "/"): row_id for row_id, row in canonical_rows.items() if row.get("sourceUri")},
         "lock": threading.Lock(),
         "meta": metadata,
         "resumed": True,
@@ -682,6 +706,27 @@ def write_reviews(directory: Path, reviews: dict[str, dict[str, Any]]) -> None:
             pass
 
 
+def session_reviews(session: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Read the current review projection from the durable JSONL file.
+
+    The browser may keep a rendering snapshot, but this file remains the sole
+    authority for which chunks have been reviewed. Re-reading it here also
+    preserves edits made outside the current API process.
+    """
+
+    path = Path(session["directory"]) / "reviews.jsonl"
+    if not path.is_file():
+        return {}
+    persisted = parse_reviews_jsonl_text(path.read_text(encoding="utf-8"))
+    rows_by_key = session["rows_by_key"]
+    legacy_rows_by_key = session.get("legacy_rows_by_key", {})
+    return {
+        (rows_by_key.get(key) or legacy_rows_by_key.get(key)): record
+        for key, record in persisted.items()
+        if key in rows_by_key or key in legacy_rows_by_key
+    }
+
+
 def _sync_directory(directory: Path) -> None:
     """Persist a replacement directory entry where the platform permits it."""
 
@@ -715,10 +760,9 @@ def save_review(session: dict[str, Any], payload: dict[str, Any]) -> dict[str, A
     event = review_record(row, {"action": action, "label": text}, session["reviewer"])
     directory = Path(session["directory"])
     with session["lock"]:
-        current = dict(session["reviews"])
+        current = session_reviews(session)
         current[row_id] = event
         write_reviews(directory, {review_key(record) or key: record for key, record in current.items()})
-        session["reviews"] = current
     return event
 
 
@@ -727,12 +771,60 @@ def review_human(record: dict[str, Any]) -> dict[str, Any]:
     return human if isinstance(human, dict) else {}
 
 
+def parse_import_reviews(session: dict[str, Any], content: str) -> tuple[dict[str, dict[str, Any]], int]:
+    """Read import files from every supported review schema as v3 records."""
+
+    imported: dict[str, dict[str, Any]] = {}
+    unmatched = 0
+    for line_number, line in enumerate(content.splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            raw = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise RequestError(f"reviews.jsonl:{line_number} is not valid JSON: {exc.msg}") from exc
+        if not isinstance(raw, dict):
+            raise RequestError(f"reviews.jsonl:{line_number} is not a supported Daiya review record.")
+        schema = raw.get("schema_version")
+        if schema in {"daiya-human-review-2", "daiya-human-review-3"}:
+            parsed = parse_reviews_jsonl_text(json.dumps(raw, ensure_ascii=False))
+            key, record = next(iter(parsed.items()))
+            if schema == "daiya-human-review-2":
+                row_id = session.get("legacy_rows_by_key", {}).get(key)
+                if row_id is None:
+                    unmatched += 1
+                    continue
+                record = review_record(session["rows"][row_id], review_human(record), str(record["reviewer"]), str(record["saved_at"]))
+                key = review_key(record)
+        elif schema == "daiya-human-review-1":
+            source = raw.get("source")
+            human = raw.get("human")
+            uri = str(source.get("source_uri") or "").replace("\\", "/") if isinstance(source, dict) else ""
+            row_id = session.get("rows_by_uri", {}).get(uri)
+            if row_id is None:
+                unmatched += 1
+                continue
+            if not isinstance(human, dict) or human.get("action") not in {"confirmed", "edited", "skipped"} or not isinstance(human.get("label"), str):
+                raise RequestError(f"reviews.jsonl:{line_number} has an invalid chunk or human review.")
+            if not isinstance(raw.get("saved_at"), str) or not isinstance(raw.get("reviewer"), str):
+                raise RequestError(f"reviews.jsonl:{line_number} is missing review metadata.")
+            record = review_record(session["rows"][row_id], human, raw["reviewer"], raw["saved_at"])
+            key = review_key(record)
+        else:
+            raise RequestError(f"reviews.jsonl:{line_number} is not a supported Daiya review record.")
+        if key is None:
+            raise RequestError(f"reviews.jsonl:{line_number} has an invalid chunk or human review.")
+        if key not in imported or record["saved_at"] > imported[key]["saved_at"]:
+            imported[key] = record
+    return imported, unmatched
+
+
 def import_preview(session: dict[str, Any], content: str) -> tuple[dict[str, dict[str, Any]], dict[str, int]]:
-    imported = parse_reviews_jsonl_text(content)
-    local_by_key = {review_key(record): record for record in session["reviews"].values() if review_key(record)}
-    matched = unchanged = conflicts = new = unmatched = 0
+    imported, unmatched = parse_import_reviews(session, content)
+    local_by_key = {review_key(record): record for record in session_reviews(session).values() if review_key(record)}
+    matched = unchanged = conflicts = new = 0
     for key, record in imported.items():
-        if key not in session["rows_by_key"]:
+        if key not in session["rows_by_key"] and key not in session.get("legacy_rows_by_key", {}):
             unmatched += 1
         elif key not in local_by_key:
             matched += 1
@@ -751,10 +843,10 @@ def apply_import(session: dict[str, Any], content: str, conflict_policy: str) ->
         raise RequestError("Conflict policy must be ours or theirs.")
     imported, summary = import_preview(session, content)
     with session["lock"]:
-        current = dict(session["reviews"])
+        current = session_reviews(session)
         local_by_key = {review_key(record): row_id for row_id, record in current.items() if review_key(record)}
         for key, imported_record in imported.items():
-            row_id = session["rows_by_key"].get(key)
+            row_id = session["rows_by_key"].get(key) or session.get("legacy_rows_by_key", {}).get(key)
             if not row_id:
                 continue
             local_row_id = local_by_key.get(key)
@@ -763,7 +855,6 @@ def apply_import(session: dict[str, Any], content: str, conflict_policy: str) ->
                     current.pop(local_row_id, None)
                 current[row_id] = imported_record
         write_reviews(Path(session["directory"]), {review_key(record) or row_id: record for row_id, record in current.items()})
-        session["reviews"] = current
     return current, summary
 
 
@@ -922,9 +1013,12 @@ class Handler(BaseHTTPRequestHandler):
                 rows = normalise_rows(metadata, manifest, audio_root)
                 session = create_session(payload, metadata, manifest, audio_root, rows)
                 STATE.add_session(session, audio_root)
-                public_session = {key: value for key, value in session.items() if key not in {"reviews", "rows", "rows_by_key", "lock"}}
+                public_session = {key: value for key, value in session.items() if key not in {"rows", "rows_by_key", "legacy_rows_by_key", "rows_by_uri", "lock"}}
                 public_session["directory"] = project_relative_path(Path(session["directory"]))
-                reviews = {row_id: event["human"] for row_id, event in session["reviews"].items() if isinstance(event, dict) and isinstance(event.get("human"), dict)}
+                review_records = session_reviews(session)
+                for row in rows:
+                    row["reviewed"] = row["id"] in review_records
+                reviews = {row_id: event["human"] for row_id, event in review_records.items() if isinstance(event, dict) and isinstance(event.get("human"), dict)}
                 self.send_json(HTTPStatus.OK, {"rows": rows, "session": public_session, "reviews": reviews})
             elif self.path == "/api/review/save":
                 session_id = str(payload.get("sessionId") or "")
@@ -932,7 +1026,8 @@ class Handler(BaseHTTPRequestHandler):
                 if session is None:
                     raise RequestError("Review session is not active. Reload the dataset to start a new versioned session.")
                 event = save_review(session, payload)
-                self.send_json(HTTPStatus.OK, {"review": event})
+                reviews = {row_id: record["human"] for row_id, record in session_reviews(session).items() if isinstance(record.get("human"), dict)}
+                self.send_json(HTTPStatus.OK, {"review": event, "reviews": reviews})
             elif self.path == "/api/review/import/preview":
                 session = STATE.get_session(str(payload.get("sessionId") or ""))
                 if session is None:

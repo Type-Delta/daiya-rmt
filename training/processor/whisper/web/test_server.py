@@ -12,13 +12,18 @@ from pathlib import Path
 from server import (
     AppState,
     RequestError,
+    apply_import,
     as_path,
     build_auto_label_job,
     build_validation_job,
     create_session,
     is_loopback_host,
     normalise_rows,
+    legacy_row_chunk_key,
+    row_chunk_key,
     save_review,
+    session_reviews,
+    import_preview,
     web_configuration,
 )
 
@@ -41,7 +46,9 @@ def active_session(directory: Path, rows: list[dict[str, object]]) -> dict[str, 
         "directory": str(directory),
         "reviewer": "tester",
         "rows": {str(row["id"]): row for row in rows},
-        "reviews": {},
+        "rows_by_key": {row_chunk_key(row): str(row["id"]) for row in rows if row_chunk_key(row)},
+        "legacy_rows_by_key": {legacy_row_chunk_key(row): str(row["id"]) for row in rows if legacy_row_chunk_key(row)},
+        "rows_by_uri": {str(row["sourceUri"]): str(row["id"]) for row in rows},
         "lock": threading.Lock(),
     }
 
@@ -180,7 +187,7 @@ class ServerTests(unittest.TestCase):
             resumed = create_session({"reviewRoot": str(review_directory), "reviewer": "second"}, metadata, None, audio, [loaded_row()])
             self.assertTrue(resumed["resumed"])
             self.assertEqual(resumed["reviewer"], "first")
-            self.assertEqual(resumed["reviews"]["row-1"]["human"]["label"], "saved revision")
+            self.assertEqual(session_reviews(resumed)["row-1"]["human"]["label"], "saved revision")
 
     def test_running_job_reports_progress_and_can_be_cancelled(self) -> None:
         state = AppState()
@@ -222,10 +229,12 @@ class ServerTests(unittest.TestCase):
             with self.assertRaisesRegex(RequestError, "not part of this active session"):
                 save_review(session, {"rowId": "unknown", "text": "x", "action": "edited"})
 
-    def test_concurrent_saves_keep_one_current_record_per_chunk(self) -> None:
+    def test_concurrent_saves_preserve_every_review_in_the_jsonl_projection(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)
             rows = [loaded_row(f"row-{index}") for index in range(24)]
+            for index, row in enumerate(rows):
+                row["audioSha256"] = f"{index:064x}"
             session = active_session(directory, rows)
             with ThreadPoolExecutor(max_workers=8) as executor:
                 events = list(
@@ -233,11 +242,71 @@ class ServerTests(unittest.TestCase):
                         lambda row: save_review(session, {"rowId": row["id"], "text": f"edit-{row['id']}", "action": "edited"}),
                         rows,
                     )
-                )
+            )
             saved_reviews = [json.loads(line) for line in (directory / "reviews.jsonl").read_text(encoding="utf-8").splitlines()]
-            self.assertEqual(len(saved_reviews), 1)
-            self.assertEqual(saved_reviews[0]["schema_version"], "daiya-human-review-2")
+            self.assertEqual(len(saved_reviews), len(rows))
+            self.assertTrue(all(review["schema_version"] == "daiya-human-review-3" for review in saved_reviews))
             self.assertFalse(any(path.suffix == ".tmp" for path in directory.iterdir()))
+
+    def test_identical_audio_at_different_source_uris_keeps_both_reviews(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            first, second = loaded_row("row-1"), loaded_row("row-2")
+            second["sourceUri"] = "train/duplicate-clip.wav"
+            session = active_session(directory, [first, second])
+
+            save_review(session, {"rowId": "row-1", "text": "first", "action": "edited"})
+            save_review(session, {"rowId": "row-2", "text": "second", "action": "edited"})
+
+            saved_reviews = [json.loads(line) for line in (directory / "reviews.jsonl").read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(len(saved_reviews), 2)
+            self.assertTrue(all(review["schema_version"] == "daiya-human-review-3" for review in saved_reviews))
+
+    def test_import_normalizes_v1_and_v2_reviews_to_v3(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            row = loaded_row()
+            session = active_session(directory, [row])
+            legacy_v1 = {
+                "schema_version": "daiya-human-review-1",
+                "saved_at": "2026-07-13T13:48:59+07:00",
+                "reviewer": "tester",
+                "source": {"row_id": "row-1", "source_uri": row["sourceUri"], "audio_path": row["audioPath"]},
+                "human": {"action": "edited", "label": "from v1"},
+            }
+            _, preview = import_preview(session, json.dumps(legacy_v1))
+            self.assertEqual(preview["new"], 1)
+            reviews, _ = apply_import(session, json.dumps(legacy_v1), "ours")
+            self.assertEqual(reviews["row-1"]["schema_version"], "daiya-human-review-3")
+
+            v2 = dict(reviews["row-1"])
+            v2["schema_version"] = "daiya-human-review-2"
+            v2["chunk"] = dict(v2["chunk"])
+            v2["chunk"].pop("source_uri")
+            second_directory = Path(temp) / "second"
+            second_directory.mkdir()
+            second_session = active_session(second_directory, [row])
+            _, preview = import_preview(second_session, json.dumps(v2))
+            self.assertEqual(preview["new"], 1)
+            imported, _ = apply_import(second_session, json.dumps(v2), "ours")
+            self.assertEqual(imported["row-1"]["schema_version"], "daiya-human-review-3")
+
+    def test_save_uses_reviews_jsonl_as_the_current_review_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            first, second = loaded_row("row-1"), loaded_row("row-2")
+            first["audioSha256"] = "1" * 64
+            second["audioSha256"] = "2" * 64
+            session = active_session(directory, [first, second])
+            saved = save_review(session, {"rowId": "row-1", "text": "initial", "action": "edited"})
+            saved["human"]["label"] = "external edit"
+            (directory / "reviews.jsonl").write_text(json.dumps(saved) + "\n", encoding="utf-8")
+
+            save_review(session, {"rowId": "row-2", "text": "second", "action": "edited"})
+
+            saved_reviews = [json.loads(line) for line in (directory / "reviews.jsonl").read_text(encoding="utf-8").splitlines()]
+            labels = {review["human"]["label"] for review in saved_reviews}
+            self.assertEqual(labels, {"external edit", "second"})
 
     def test_loopback_hosts_require_no_unsafe_opt_in(self) -> None:
         self.assertTrue(is_loopback_host("127.0.0.1"))
