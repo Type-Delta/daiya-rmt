@@ -15,6 +15,7 @@ from .merge import (
 )
 
 if TYPE_CHECKING:
+    from .checkpoint_probe import ProbeConfig
     from .train import TrainingConfig
 
 
@@ -63,6 +64,12 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--max-train-samples", type=int, default=None)
     train_parser.add_argument("--max-eval-samples", type=int, default=None)
     train_parser.add_argument("--max-label-length", type=int, default=448)
+    train_parser.add_argument(
+        "--split-manifest",
+        type=Path,
+        default=None,
+        help="Optional explicit train/validation/test/benchmark split manifest grouped by source_file/conversation.",
+    )
     train_parser.add_argument("--lora-r", type=int, default=16)
     train_parser.add_argument("--lora-alpha", type=int, default=32)
     train_parser.add_argument("--lora-dropout", type=float, default=0.05)
@@ -80,6 +87,34 @@ def build_parser() -> argparse.ArgumentParser:
     )
     train_parser.add_argument("--push-to-hub", action="store_true")
     train_parser.add_argument("--hub-model-id", default=None)
+    train_parser.add_argument(
+        "--prompt-conditioning",
+        action="store_true",
+        help="Opt in to decoder prompt conditioning from metadata columns. Defaults stay unprompted.",
+    )
+    train_parser.add_argument(
+        "--prompt-max-tokens",
+        type=int,
+        default=64,
+        help="Maximum prompt body tokens before the transcript label. Transcript tokens keep priority.",
+    )
+    train_parser.add_argument(
+        "--prompt-fields",
+        default="context_before",
+        help="Comma-separated metadata fields to build the prompt from; defaults to context_before.",
+    )
+    train_parser.add_argument(
+        "--prompt-full-context",
+        dest="prompt_terms_only",
+        action="store_false",
+        help="Use full selected context fields instead of extracting only Terms: fragments.",
+    )
+    train_parser.set_defaults(prompt_terms_only=True)
+    train_parser.add_argument(
+        "--prompt-allow-future-context",
+        action="store_true",
+        help="Allow context_after/right-context fields. Use only for explicit offline-labeling experiments.",
+    )
 
     merge_parser = subparsers.add_parser(
         "merge",
@@ -102,6 +137,95 @@ def build_parser() -> argparse.ArgumentParser:
     merge_parser.add_argument("--language", default=None)
     merge_parser.add_argument("--generation-max-length", type=int, default=225)
 
+    probe_parser = subparsers.add_parser(
+        "probe-checkpoints",
+        help="Score generated text quality for LoRA checkpoints and select the best generated-CER checkpoint.",
+    )
+    probe_parser.add_argument("--run-dir", type=Path, required=True, help="Training run containing checkpoint-* dirs.")
+    probe_parser.add_argument("--base-model", default=DEFAULT_BASE_MODEL)
+    probe_parser.add_argument("--dataset-dir", type=Path, default=default_dataset_dir())
+    probe_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=default_checkpoint_probe_output_dir(),
+        help="Directory for checkpoint probe details JSONL and summary JSON.",
+    )
+    probe_parser.add_argument(
+        "--candidate",
+        dest="candidates",
+        action="append",
+        type=Path,
+        default=[],
+        help="Explicit adapter candidate to score. Can be repeated.",
+    )
+    probe_parser.add_argument("--no-checkpoints", dest="include_checkpoints", action="store_false")
+    probe_parser.set_defaults(include_checkpoints=True)
+    probe_parser.add_argument("--no-final", dest="include_final", action="store_false")
+    probe_parser.set_defaults(include_final=True)
+    probe_parser.add_argument("--split", default=None, help="Dataset split to probe; defaults to validation/test/benchmark/eval/train.")
+    probe_parser.add_argument("--split-manifest", type=Path, default=None)
+    probe_parser.add_argument(
+        "--selector-manifest",
+        type=Path,
+        default=None,
+        help="Frozen JSONL/plain sample-ID allowlist for exact checkpoint-gate rows.",
+    )
+    probe_parser.add_argument("--max-samples", type=int, default=32)
+    probe_parser.add_argument("--min-short-samples", type=int, default=8)
+    probe_parser.add_argument("--min-technical-term-samples", type=int, default=8)
+    probe_parser.add_argument("--short-utterance-seconds", type=float, default=3.0)
+    probe_parser.add_argument(
+        "--primary-metric",
+        choices=(
+            "micro_cer",
+            "mean_cer",
+            "micro_cer_no_space",
+            "mean_cer_no_space",
+            "micro_wer_like",
+            "mean_wer_like",
+        ),
+        default="micro_cer",
+    )
+    probe_parser.add_argument(
+        "--generation-failure-policy",
+        choices=("raise", "eval-loss"),
+        default="raise",
+        help="Generation gate failure behavior. eval-loss fallback is explicit and recorded in output.",
+    )
+    probe_parser.add_argument("--device", default="auto")
+    probe_parser.add_argument("--fp16", action="store_true")
+    probe_parser.add_argument("--bf16", action="store_true")
+    probe_parser.add_argument("--load-in-4bit", action="store_true")
+    probe_parser.add_argument("--task", default="transcribe")
+    probe_parser.add_argument("--language", default=None)
+    probe_parser.add_argument(
+        "--language-policy",
+        choices=("metadata", "global", "none"),
+        default="metadata",
+        help="Use row metadata, one global language, or no language hint during checkpoint generation.",
+    )
+    probe_parser.add_argument("--generation-max-length", type=int, default=225)
+    probe_parser.add_argument(
+        "--prompt-strategy",
+        choices=("isolated", "rolling-initial-prompt"),
+        default="isolated",
+        help="Runtime generation prompt strategy for checkpoint probing.",
+    )
+    probe_parser.add_argument("--prompt-max-tokens", type=int, default=64)
+    probe_parser.add_argument("--prompt-fields", default="context_before")
+    probe_parser.add_argument("--prompt-full-context", dest="prompt_terms_only", action="store_false")
+    probe_parser.set_defaults(prompt_terms_only=True)
+    probe_parser.add_argument("--prompt-allow-future-context", action="store_true")
+    probe_parser.add_argument(
+        "--no-prompt-row-context",
+        dest="prompt_include_row_context",
+        action="store_false",
+        help="For rolling probes, use prior hypotheses only (no per-row context_before terms).",
+    )
+    probe_parser.set_defaults(prompt_include_row_context=True)
+    probe_parser.add_argument("--rolling-prompt-turns", type=int, default=3)
+    probe_parser.add_argument("--rolling-prompt-chars", type=int, default=512)
+
     return parser
 
 
@@ -120,6 +244,10 @@ def default_dataset_dir() -> Path:
 
 def default_output_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "runs" / "whisper-medium-lora"
+
+
+def default_checkpoint_probe_output_dir() -> Path:
+    return Path(__file__).resolve().parents[2] / "runs" / "checkpoint_probes"
 
 
 def config_from_args(args: argparse.Namespace) -> TrainingConfig:
@@ -151,6 +279,7 @@ def config_from_args(args: argparse.Namespace) -> TrainingConfig:
         max_train_samples=args.max_train_samples,
         max_eval_samples=args.max_eval_samples,
         max_label_length=args.max_label_length,
+        split_manifest=args.split_manifest,
         lora_r=args.lora_r,
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
@@ -166,6 +295,11 @@ def config_from_args(args: argparse.Namespace) -> TrainingConfig:
         resume_from_checkpoint=args.resume_from_checkpoint,
         push_to_hub=args.push_to_hub,
         hub_model_id=args.hub_model_id,
+        prompt_conditioning=args.prompt_conditioning,
+        prompt_max_tokens=args.prompt_max_tokens,
+        prompt_fields=tuple(field.strip() for field in args.prompt_fields.split(",") if field.strip()),
+        prompt_terms_only=args.prompt_terms_only,
+        prompt_allow_future_context=args.prompt_allow_future_context,
     )
 
 
@@ -186,6 +320,45 @@ def merge_config_from_args(args: argparse.Namespace) -> MergeConfig:
         task=args.task,
         language=args.language,
         generation_max_length=args.generation_max_length,
+    )
+
+
+def probe_config_from_args(args: argparse.Namespace) -> ProbeConfig:
+    from .checkpoint_probe import ProbeConfig
+
+    return ProbeConfig(
+        run_dir=args.run_dir,
+        base_model=args.base_model,
+        dataset_dir=args.dataset_dir,
+        output_dir=args.output_dir,
+        candidates=tuple(args.candidates),
+        include_checkpoints=args.include_checkpoints,
+        include_final=args.include_final,
+        split=args.split,
+        split_manifest=args.split_manifest,
+        selector_manifest=args.selector_manifest,
+        max_samples=args.max_samples,
+        min_short_samples=args.min_short_samples,
+        min_technical_term_samples=args.min_technical_term_samples,
+        short_utterance_seconds=args.short_utterance_seconds,
+        primary_metric=args.primary_metric,
+        generation_failure_policy=args.generation_failure_policy,
+        device=args.device,
+        fp16=args.fp16,
+        bf16=args.bf16,
+        load_in_4bit=args.load_in_4bit,
+        task=args.task,
+        language=args.language,
+        language_policy=args.language_policy,
+        generation_max_length=args.generation_max_length,
+        prompt_strategy=args.prompt_strategy,
+        prompt_max_tokens=args.prompt_max_tokens,
+        prompt_fields=tuple(field.strip() for field in args.prompt_fields.split(",") if field.strip()),
+        prompt_terms_only=args.prompt_terms_only,
+        prompt_allow_future_context=args.prompt_allow_future_context,
+        prompt_include_row_context=args.prompt_include_row_context,
+        rolling_prompt_turns=args.rolling_prompt_turns,
+        rolling_prompt_chars=args.rolling_prompt_chars,
     )
 
 
@@ -221,6 +394,20 @@ def main() -> None:
                     f"drift={result.wer.absolute_drift:.2f}, "
                     f"samples={result.wer.sample_count}"
                 )
+        return
+
+    if args.command == "probe-checkpoints":
+        from .checkpoint_probe import run_probe
+
+        result = run_probe(probe_config_from_args(args))
+        selected = result["selected_checkpoint"]
+        if result["selection_mode"] == "eval_loss_fallback":
+            print(f"Selected checkpoint: {selected['name']} (eval_loss={selected['eval_loss']})")
+        else:
+            print(
+                "Selected checkpoint: "
+                f"{selected['name']} ({result['primary_metric']}={selected['overall'][result['primary_metric']]})"
+            )
         return
 
     parser.print_help()

@@ -1,0 +1,74 @@
+{
+  "launcher_pid": 127232,
+  "started_at": "2026-07-11T15:44:02.1598749Z",
+  "job": "m31_primary_benchmark",
+  "worktree": "C:\\Users\\Kornnaras\\.codex\\worktrees\\3a6c\\daiya-rmt",
+  "git_commit": "8797bd49cab69369dd7664151f5e862ca34a4430",
+  "python": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\.venv\\Scripts\\python.exe",
+  "runtime": {
+    "python": "3.12.10",
+    "ctranslate2": "4.8.0",
+    "faster_whisper": "1.2.1"
+  },
+  "dataset_metadata_sha256": "9d56736b055df552fa20b325fce0720b87d4bd29f0b166fd4d1197d87874a028",
+  "models": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\largev3-m2-iter1-ct2-int8_float16,C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3\\full\\largev3-m3-iter1-prompt-terms-checkpoint-800-ct2-int8_float16,C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\converted\\checkpoint-588-ct2-int8_float16,C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\converted\\checkpoint-500-ct2-int8_float16",
+  "model_provenance": [
+    {
+      "path": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\largev3-m2-iter1-ct2-int8_float16",
+      "model_bin_sha256": "afcca1964a812ada5dd15bf548325c684b2685665205b7ad11d4b5cc81afe8a6"
+    },
+    {
+      "path": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3\\full\\largev3-m3-iter1-prompt-terms-checkpoint-800-ct2-int8_float16",
+      "model_bin_sha256": "72e59b74a4fb2fe72866a7f542da37a7bba5edb5bec42523da9b679458e84629"
+    },
+    {
+      "path": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\converted\\checkpoint-588-ct2-int8_float16",
+      "model_bin_sha256": "96dbf5f558b2fe0e6aa91f44a4e490742092df7e473a89dbd315530158446227"
+    },
+    {
+      "path": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\converted\\checkpoint-500-ct2-int8_float16",
+      "model_bin_sha256": "dd94e34e7cb0c67c86520ce2460feee0701dc78bfdd663d9a1a1dd859b2739ae"
+    }
+  ],
+  "arguments": [
+    "C:\\Users\\Kornnaras\\.codex\\worktrees\\3a6c\\daiya-rmt\\lab\\asr_eval.py",
+    "--models",
+    "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\largev3-m2-iter1-ct2-int8_float16,C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3\\full\\largev3-m3-iter1-prompt-terms-checkpoint-800-ct2-int8_float16,C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\converted\\checkpoint-588-ct2-int8_float16,C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\converted\\checkpoint-500-ct2-int8_float16",
+    "--dataset-dir",
+    "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\dataset\\hf_datasets\\whisper",
+    "--manifest",
+    "C:\\Users\\Kornnaras\\.codex\\worktrees\\3a6c\\daiya-rmt\\docs\\experiments\\m31\\m31-benchmark-v1.jsonl",
+    "--sample-id-field",
+    "sample_id",
+    "--split-manifest",
+    "C:\\Users\\Kornnaras\\.codex\\worktrees\\3a6c\\daiya-rmt\\docs\\experiments\\m31\\m31-split-v1.jsonl",
+    "--required-split",
+    "benchmark",
+    "--output-dir",
+    "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\benchmarks\\primary-v1",
+    "--benchmark-strategies",
+    "isolated,rolling_initial_prompt",
+    "--include-context-technical-terms",
+    "--rolling-prompt-turns",
+    "3",
+    "--rolling-prompt-chars",
+    "512",
+    "--device",
+    "cuda",
+    "--compute-type",
+    "int8_float16",
+    "--language",
+    "th",
+    "--beam-size",
+    "5",
+    "--no-condition-on-previous-text",
+    "--short-utterance-seconds",
+    "3.0",
+    "--bootstrap-samples",
+    "2000",
+    "--bootstrap-seed",
+    "1337",
+    "--bootstrap-block-size",
+    "8"
+  ]
+}

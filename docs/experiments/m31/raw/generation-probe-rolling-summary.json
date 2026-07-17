@@ -1,0 +1,492 @@
+{
+  "status": "ok",
+  "selection_mode": "generation_gate",
+  "run_id": "20260711T064742Z_largev3-m31-iter1-prompt-terms-gen-gated",
+  "started_at": "2026-07-11T06:47:31.258893+00:00",
+  "elapsed_seconds": 10495.897088600002,
+  "run_dir": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\full\\largev3-m31-iter1-prompt-terms-gen-gated",
+  "base_model": "openai/whisper-large-v3",
+  "dataset": {
+    "dataset_dir": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\dataset\\hf_datasets\\whisper",
+    "metadata_jsonl": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\dataset\\hf_datasets\\whisper\\metadata.jsonl",
+    "metadata_jsonl_sha256": "9d56736b055df552fa20b325fce0720b87d4bd29f0b166fd4d1197d87874a028",
+    "split_manifest": {
+      "path": "C:\\Users\\Kornnaras\\.codex\\worktrees\\3a6c\\daiya-rmt\\docs\\experiments\\m31\\m31-split-v1.jsonl",
+      "sha256": "16d9655b0a57839b4562bb72e3114c949592a641b294b7586b490ffe07d80ad3",
+      "entry_count": 11,
+      "assigned_sample_count": 7091,
+      "group_count": 11,
+      "splits": {
+        "benchmark": 1651,
+        "train": 4696,
+        "validation": 744
+      },
+      "split_sample_sha256": {
+        "benchmark": "f3fd570a3d584025ae9925b850778c08b4c50f36713d8171c1f83a20d95fce28",
+        "train": "348d83e83624b4b21edfbf5cf75c45e118c8af6d07fc4aa075e294b98de7cb6b",
+        "validation": "83401d6ff3c3dffcceac6cae2763071b6e5ba33506ebe0e77b77c299c02ec73f"
+      }
+    }
+  },
+  "dataset_dir": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\dataset\\hf_datasets\\whisper",
+  "output_dir": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\probes\\rolling-attention-mask",
+  "details_path": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\probes\\rolling-attention-mask\\details_20260711T064742Z_largev3-m31-iter1-prompt-terms-gen-gated.jsonl",
+  "summary_path": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\probes\\rolling-attention-mask\\summary_20260711T064742Z_largev3-m31-iter1-prompt-terms-gen-gated.json",
+  "primary_metric": "micro_cer",
+  "generation_failure_policy": "raise",
+  "selected_checkpoint": {
+    "name": "checkpoint-588",
+    "path": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\full\\largev3-m31-iter1-prompt-terms-gen-gated\\checkpoint-588",
+    "attempted_count": 128,
+    "required_count": 128,
+    "scored_count": 128,
+    "failed_count": 0,
+    "status_counts": {
+      "ok": 128
+    },
+    "freshness": {
+      "candidate_fingerprint": "3f1382b2266bcfbd6a0ca5108e45fb275b5bff1ac800d9483a055058d3399b09",
+      "dataset_fingerprint": "b01e6009cda664d591947a0a9fed39d326ade59ad023047a31eb1ffec53fe7ab",
+      "generation_fingerprint": "0f0495dc017abbeaebedad83697d2ab0d387c28652bece9ab495154d6d022c4f"
+    },
+    "eval_loss": null,
+    "overall": {
+      "count": 128,
+      "mean_cer": 0.3601329394156346,
+      "micro_cer": 0.2717678100263852,
+      "mean_cer_no_space": 0.35142793260385263,
+      "micro_cer_no_space": 0.2620253164556962,
+      "mean_wer_like": 0.3883232604254034,
+      "micro_wer_like": 0.2794798717491984
+    },
+    "short_utterance_subset": {
+      "count": 64,
+      "mean_cer": 0.44738888560541695,
+      "micro_cer": 0.3916083916083916,
+      "mean_cer_no_space": 0.4377867668604604,
+      "micro_cer_no_space": 0.3879485443466486,
+      "mean_wer_like": 0.4882249484352636,
+      "micro_wer_like": 0.43106995884773663
+    },
+    "english_technical_term_subset": {
+      "count": 126,
+      "mean_cer": 0.36584933527937485,
+      "micro_cer": 0.2731436837029894,
+      "mean_cer_no_space": 0.35700615375629474,
+      "micro_cer_no_space": 0.26339228909530477,
+      "mean_wer_like": 0.39448712170199707,
+      "micro_wer_like": 0.2809310653536258
+    }
+  },
+  "final_adapter": {
+    "name": "largev3-m31-iter1-prompt-terms-gen-gated",
+    "path": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\full\\largev3-m31-iter1-prompt-terms-gen-gated",
+    "attempted_count": 128,
+    "required_count": 128,
+    "scored_count": 128,
+    "failed_count": 0,
+    "status_counts": {
+      "ok": 128
+    },
+    "freshness": {
+      "candidate_fingerprint": "26768d945db18484e7ec05125eb1c5e95594005fc8b56e842a29150af51cb27a",
+      "dataset_fingerprint": "b01e6009cda664d591947a0a9fed39d326ade59ad023047a31eb1ffec53fe7ab",
+      "generation_fingerprint": "0f0495dc017abbeaebedad83697d2ab0d387c28652bece9ab495154d6d022c4f"
+    },
+    "eval_loss": null,
+    "overall": {
+      "count": 128,
+      "mean_cer": 0.3593823549457243,
+      "micro_cer": 0.2828016310865915,
+      "mean_cer_no_space": 0.3483103341360183,
+      "micro_cer_no_space": 0.2739240506329114,
+      "mean_wer_like": 0.39735058934638373,
+      "micro_wer_like": 0.29266120413252583
+    },
+    "short_utterance_subset": {
+      "count": 64,
+      "mean_cer": 0.4317869833354043,
+      "micro_cer": 0.3941513032422123,
+      "mean_cer_no_space": 0.41638294271266774,
+      "micro_cer_no_space": 0.3879485443466486,
+      "mean_wer_like": 0.4914071036894297,
+      "micro_wer_like": 0.43621399176954734
+    },
+    "english_technical_term_subset": {
+      "count": 126,
+      "mean_cer": 0.3650868367702596,
+      "micro_cer": 0.28423336547733846,
+      "mean_cer_no_space": 0.3538390695984948,
+      "micro_cer_no_space": 0.2753530983585698,
+      "mean_wer_like": 0.4036577415582311,
+      "micro_wer_like": 0.29418084153983887
+    }
+  },
+  "selected_vs_final_delta": {
+    "selected_minus_final": -0.011033821060206284
+  },
+  "probe": {
+    "split": "validation",
+    "split_manifest": "C:\\Users\\Kornnaras\\.codex\\worktrees\\3a6c\\daiya-rmt\\docs\\experiments\\m31\\m31-split-v1.jsonl",
+    "max_samples": 32,
+    "short_utterance_seconds": 3.0,
+    "min_short_samples": 8,
+    "min_technical_term_samples": 8,
+    "selected_count": 128,
+    "tag_counts": {
+      "english_technical_term": 126,
+      "overall": 128,
+      "short_utterance": 64
+    },
+    "selector": {
+      "path": "C:\\Users\\Kornnaras\\.codex\\worktrees\\3a6c\\daiya-rmt\\docs\\experiments\\m31\\m31-generation-gate-v1.jsonl",
+      "sha256": "62837673770ca5c08883185ac5e6188b02a6b95e80be4d1337bf1d9a4099dd28",
+      "count": 128,
+      "sample_set_sha256": "e2cfe029ca905d5215246006aece4676dcd51ed309bc429c9a916f71b3b32619"
+    }
+  },
+  "generation": {
+    "device": "cuda",
+    "fp16": true,
+    "bf16": false,
+    "load_in_4bit": true,
+    "task": "transcribe",
+    "language": null,
+    "language_policy": "metadata",
+    "generation_max_length": 225,
+    "prompt_strategy": "rolling-initial-prompt",
+    "prompt_max_tokens": 64,
+    "prompt_fields": [
+      "context_before"
+    ],
+    "prompt_terms_only": true,
+    "prompt_allow_future_context": false,
+    "prompt_include_row_context": true,
+    "rolling_prompt_turns": 3,
+    "rolling_prompt_chars": 512,
+    "selector_manifest_sha256": "62837673770ca5c08883185ac5e6188b02a6b95e80be4d1337bf1d9a4099dd28"
+  },
+  "freshness": {
+    "dataset_fingerprint": "b01e6009cda664d591947a0a9fed39d326ade59ad023047a31eb1ffec53fe7ab",
+    "generation_fingerprint": "0f0495dc017abbeaebedad83697d2ab0d387c28652bece9ab495154d6d022c4f",
+    "candidate_fingerprints": {
+      "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\full\\largev3-m31-iter1-prompt-terms-gen-gated\\checkpoint-100": "42207458ea30b3eebcc822a81d2196b00747a0d853b18ee66712104ab74fcc57",
+      "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\full\\largev3-m31-iter1-prompt-terms-gen-gated\\checkpoint-200": "980aaedd9a1c2e6751b1d38066da0cfa705310dbcc85bdf44ed3b5072ed55cad",
+      "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\full\\largev3-m31-iter1-prompt-terms-gen-gated\\checkpoint-300": "006edec12818822ecc86935be96800ea85f0b0cf587bda7e89ea7264935fb3ea",
+      "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\full\\largev3-m31-iter1-prompt-terms-gen-gated\\checkpoint-400": "32e19534215339769eb167b11a29b51ff2ab19794db8f7f39d02d1cd75215737",
+      "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\full\\largev3-m31-iter1-prompt-terms-gen-gated\\checkpoint-500": "521c402aeadddf6a6e55ed42fee0605548f8118348221243e7888cfb30a1cac8",
+      "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\full\\largev3-m31-iter1-prompt-terms-gen-gated\\checkpoint-588": "3f1382b2266bcfbd6a0ca5108e45fb275b5bff1ac800d9483a055058d3399b09",
+      "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\full\\largev3-m31-iter1-prompt-terms-gen-gated": "26768d945db18484e7ec05125eb1c5e95594005fc8b56e842a29150af51cb27a"
+    }
+  },
+  "candidates": [
+    {
+      "name": "checkpoint-100",
+      "path": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\full\\largev3-m31-iter1-prompt-terms-gen-gated\\checkpoint-100",
+      "attempted_count": 128,
+      "required_count": 128,
+      "scored_count": 128,
+      "failed_count": 0,
+      "status_counts": {
+        "ok": 128
+      },
+      "freshness": {
+        "candidate_fingerprint": "42207458ea30b3eebcc822a81d2196b00747a0d853b18ee66712104ab74fcc57",
+        "dataset_fingerprint": "b01e6009cda664d591947a0a9fed39d326ade59ad023047a31eb1ffec53fe7ab",
+        "generation_fingerprint": "0f0495dc017abbeaebedad83697d2ab0d387c28652bece9ab495154d6d022c4f"
+      },
+      "eval_loss": 0.46226784586906433,
+      "overall": {
+        "count": 128,
+        "mean_cer": 0.3876208139365808,
+        "micro_cer": 0.3177020868313744,
+        "mean_cer_no_space": 0.379591199930548,
+        "micro_cer_no_space": 0.310126582278481,
+        "mean_wer_like": 0.4310659336697796,
+        "micro_wer_like": 0.33309583184894903
+      },
+      "short_utterance_subset": {
+        "count": 64,
+        "mean_cer": 0.45665449525914054,
+        "micro_cer": 0.42021614748887476,
+        "mean_cer_no_space": 0.44487074237977187,
+        "micro_cer_no_space": 0.41232227488151657,
+        "mean_wer_like": 0.5149084957386565,
+        "micro_wer_like": 0.46810699588477367
+      },
+      "english_technical_term_subset": {
+        "count": 126,
+        "mean_cer": 0.3934795805305183,
+        "micro_cer": 0.3191899710703954,
+        "mean_cer_no_space": 0.38561645707230274,
+        "micro_cer_no_space": 0.3117444967553124,
+        "mean_wer_like": 0.4379082500772364,
+        "micro_wer_like": 0.3348254252461952
+      }
+    },
+    {
+      "name": "checkpoint-200",
+      "path": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\full\\largev3-m31-iter1-prompt-terms-gen-gated\\checkpoint-200",
+      "attempted_count": 128,
+      "required_count": 128,
+      "scored_count": 128,
+      "failed_count": 0,
+      "status_counts": {
+        "ok": 128
+      },
+      "freshness": {
+        "candidate_fingerprint": "980aaedd9a1c2e6751b1d38066da0cfa705310dbcc85bdf44ed3b5072ed55cad",
+        "dataset_fingerprint": "b01e6009cda664d591947a0a9fed39d326ade59ad023047a31eb1ffec53fe7ab",
+        "generation_fingerprint": "0f0495dc017abbeaebedad83697d2ab0d387c28652bece9ab495154d6d022c4f"
+      },
+      "eval_loss": 0.4253045320510864,
+      "overall": {
+        "count": 128,
+        "mean_cer": 0.37209509436339866,
+        "micro_cer": 0.2904773326936915,
+        "mean_cer_no_space": 0.3601844172641626,
+        "micro_cer_no_space": 0.28139240506329116,
+        "mean_wer_like": 0.4115880848181471,
+        "micro_wer_like": 0.3019237620235126
+      },
+      "short_utterance_subset": {
+        "count": 64,
+        "mean_cer": 0.4505039943423112,
+        "micro_cer": 0.41004450095359185,
+        "mean_cer_no_space": 0.43409477229411014,
+        "micro_cer_no_space": 0.4035206499661476,
+        "mean_wer_like": 0.5124966955042831,
+        "micro_wer_like": 0.45164609053497945
+      },
+      "english_technical_term_subset": {
+        "count": 126,
+        "mean_cer": 0.37770742096411103,
+        "micro_cer": 0.2918273866923819,
+        "mean_cer_no_space": 0.36590163023660965,
+        "micro_cer_no_space": 0.2828604148110447,
+        "mean_wer_like": 0.41812122902160975,
+        "micro_wer_like": 0.3034914950760967
+      }
+    },
+    {
+      "name": "checkpoint-300",
+      "path": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\full\\largev3-m31-iter1-prompt-terms-gen-gated\\checkpoint-300",
+      "attempted_count": 128,
+      "required_count": 128,
+      "scored_count": 128,
+      "failed_count": 0,
+      "status_counts": {
+        "ok": 128
+      },
+      "freshness": {
+        "candidate_fingerprint": "006edec12818822ecc86935be96800ea85f0b0cf587bda7e89ea7264935fb3ea",
+        "dataset_fingerprint": "b01e6009cda664d591947a0a9fed39d326ade59ad023047a31eb1ffec53fe7ab",
+        "generation_fingerprint": "0f0495dc017abbeaebedad83697d2ab0d387c28652bece9ab495154d6d022c4f"
+      },
+      "eval_loss": 0.4153537452220917,
+      "overall": {
+        "count": 128,
+        "mean_cer": 0.3593823549457243,
+        "micro_cer": 0.2828016310865915,
+        "mean_cer_no_space": 0.3483103341360183,
+        "micro_cer_no_space": 0.2739240506329114,
+        "mean_wer_like": 0.39735058934638373,
+        "micro_wer_like": 0.29266120413252583
+      },
+      "short_utterance_subset": {
+        "count": 64,
+        "mean_cer": 0.4317869833354043,
+        "micro_cer": 0.3941513032422123,
+        "mean_cer_no_space": 0.41638294271266774,
+        "micro_cer_no_space": 0.3879485443466486,
+        "mean_wer_like": 0.4914071036894297,
+        "micro_wer_like": 0.43621399176954734
+      },
+      "english_technical_term_subset": {
+        "count": 126,
+        "mean_cer": 0.3650868367702596,
+        "micro_cer": 0.28423336547733846,
+        "mean_cer_no_space": 0.3538390695984948,
+        "micro_cer_no_space": 0.2753530983585698,
+        "mean_wer_like": 0.4036577415582311,
+        "micro_wer_like": 0.29418084153983887
+      }
+    },
+    {
+      "name": "checkpoint-400",
+      "path": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\full\\largev3-m31-iter1-prompt-terms-gen-gated\\checkpoint-400",
+      "attempted_count": 128,
+      "required_count": 128,
+      "scored_count": 128,
+      "failed_count": 0,
+      "status_counts": {
+        "ok": 128
+      },
+      "freshness": {
+        "candidate_fingerprint": "32e19534215339769eb167b11a29b51ff2ab19794db8f7f39d02d1cd75215737",
+        "dataset_fingerprint": "b01e6009cda664d591947a0a9fed39d326ade59ad023047a31eb1ffec53fe7ab",
+        "generation_fingerprint": "0f0495dc017abbeaebedad83697d2ab0d387c28652bece9ab495154d6d022c4f"
+      },
+      "eval_loss": 0.4103480577468872,
+      "overall": {
+        "count": 128,
+        "mean_cer": 0.3676896337720218,
+        "micro_cer": 0.2843607579755337,
+        "mean_cer_no_space": 0.3567599118297981,
+        "micro_cer_no_space": 0.2762025316455696,
+        "mean_wer_like": 0.4035487908710363,
+        "micro_wer_like": 0.2990737442109013
+      },
+      "short_utterance_subset": {
+        "count": 64,
+        "mean_cer": 0.4488121058550638,
+        "micro_cer": 0.4049586776859504,
+        "mean_cer_no_space": 0.43281496959080135,
+        "micro_cer_no_space": 0.3994583615436696,
+        "mean_wer_like": 0.49922351834044104,
+        "micro_wer_like": 0.44753086419753085
+      },
+      "english_technical_term_subset": {
+        "count": 126,
+        "mean_cer": 0.3735259771652285,
+        "micro_cer": 0.2858003857280617,
+        "mean_cer_no_space": 0.36242276757312825,
+        "micro_cer_no_space": 0.2776434660898333,
+        "mean_wer_like": 0.4099543272340686,
+        "micro_wer_like": 0.300626678603402
+      }
+    },
+    {
+      "name": "checkpoint-500",
+      "path": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\full\\largev3-m31-iter1-prompt-terms-gen-gated\\checkpoint-500",
+      "attempted_count": 128,
+      "required_count": 128,
+      "scored_count": 128,
+      "failed_count": 0,
+      "status_counts": {
+        "ok": 128
+      },
+      "freshness": {
+        "candidate_fingerprint": "521c402aeadddf6a6e55ed42fee0605548f8118348221243e7888cfb30a1cac8",
+        "dataset_fingerprint": "b01e6009cda664d591947a0a9fed39d326ade59ad023047a31eb1ffec53fe7ab",
+        "generation_fingerprint": "0f0495dc017abbeaebedad83697d2ab0d387c28652bece9ab495154d6d022c4f"
+      },
+      "eval_loss": 0.4065481722354889,
+      "overall": {
+        "count": 128,
+        "mean_cer": 0.3646911214599133,
+        "micro_cer": 0.28172223554809306,
+        "mean_cer_no_space": 0.3563778098123537,
+        "micro_cer_no_space": 0.2720253164556962,
+        "mean_wer_like": 0.39975700871588304,
+        "micro_wer_like": 0.28963306020662627
+      },
+      "short_utterance_subset": {
+        "count": 64,
+        "mean_cer": 0.4460473452013765,
+        "micro_cer": 0.3960584869675779,
+        "mean_cer_no_space": 0.43658625366397946,
+        "micro_cer_no_space": 0.3920108327691266,
+        "mean_wer_like": 0.49941550154157754,
+        "micro_wer_like": 0.43621399176954734
+      },
+      "english_technical_term_subset": {
+        "count": 126,
+        "mean_cer": 0.37047986941959443,
+        "micro_cer": 0.28314850530376084,
+        "mean_cer_no_space": 0.3620346004442958,
+        "micro_cer_no_space": 0.27344445858251687,
+        "mean_wer_like": 0.4061023580605796,
+        "micro_wer_like": 0.2911369740376007
+      }
+    },
+    {
+      "name": "checkpoint-588",
+      "path": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\full\\largev3-m31-iter1-prompt-terms-gen-gated\\checkpoint-588",
+      "attempted_count": 128,
+      "required_count": 128,
+      "scored_count": 128,
+      "failed_count": 0,
+      "status_counts": {
+        "ok": 128
+      },
+      "freshness": {
+        "candidate_fingerprint": "3f1382b2266bcfbd6a0ca5108e45fb275b5bff1ac800d9483a055058d3399b09",
+        "dataset_fingerprint": "b01e6009cda664d591947a0a9fed39d326ade59ad023047a31eb1ffec53fe7ab",
+        "generation_fingerprint": "0f0495dc017abbeaebedad83697d2ab0d387c28652bece9ab495154d6d022c4f"
+      },
+      "eval_loss": null,
+      "overall": {
+        "count": 128,
+        "mean_cer": 0.3601329394156346,
+        "micro_cer": 0.2717678100263852,
+        "mean_cer_no_space": 0.35142793260385263,
+        "micro_cer_no_space": 0.2620253164556962,
+        "mean_wer_like": 0.3883232604254034,
+        "micro_wer_like": 0.2794798717491984
+      },
+      "short_utterance_subset": {
+        "count": 64,
+        "mean_cer": 0.44738888560541695,
+        "micro_cer": 0.3916083916083916,
+        "mean_cer_no_space": 0.4377867668604604,
+        "micro_cer_no_space": 0.3879485443466486,
+        "mean_wer_like": 0.4882249484352636,
+        "micro_wer_like": 0.43106995884773663
+      },
+      "english_technical_term_subset": {
+        "count": 126,
+        "mean_cer": 0.36584933527937485,
+        "micro_cer": 0.2731436837029894,
+        "mean_cer_no_space": 0.35700615375629474,
+        "micro_cer_no_space": 0.26339228909530477,
+        "mean_wer_like": 0.39448712170199707,
+        "micro_wer_like": 0.2809310653536258
+      }
+    },
+    {
+      "name": "largev3-m31-iter1-prompt-terms-gen-gated",
+      "path": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\full\\largev3-m31-iter1-prompt-terms-gen-gated",
+      "attempted_count": 128,
+      "required_count": 128,
+      "scored_count": 128,
+      "failed_count": 0,
+      "status_counts": {
+        "ok": 128
+      },
+      "freshness": {
+        "candidate_fingerprint": "26768d945db18484e7ec05125eb1c5e95594005fc8b56e842a29150af51cb27a",
+        "dataset_fingerprint": "b01e6009cda664d591947a0a9fed39d326ade59ad023047a31eb1ffec53fe7ab",
+        "generation_fingerprint": "0f0495dc017abbeaebedad83697d2ab0d387c28652bece9ab495154d6d022c4f"
+      },
+      "eval_loss": null,
+      "overall": {
+        "count": 128,
+        "mean_cer": 0.3593823549457243,
+        "micro_cer": 0.2828016310865915,
+        "mean_cer_no_space": 0.3483103341360183,
+        "micro_cer_no_space": 0.2739240506329114,
+        "mean_wer_like": 0.39735058934638373,
+        "micro_wer_like": 0.29266120413252583
+      },
+      "short_utterance_subset": {
+        "count": 64,
+        "mean_cer": 0.4317869833354043,
+        "micro_cer": 0.3941513032422123,
+        "mean_cer_no_space": 0.41638294271266774,
+        "micro_cer_no_space": 0.3879485443466486,
+        "mean_wer_like": 0.4914071036894297,
+        "micro_wer_like": 0.43621399176954734
+      },
+      "english_technical_term_subset": {
+        "count": 126,
+        "mean_cer": 0.3650868367702596,
+        "micro_cer": 0.28423336547733846,
+        "mean_cer_no_space": 0.3538390695984948,
+        "micro_cer_no_space": 0.2753530983585698,
+        "mean_wer_like": 0.4036577415582311,
+        "micro_wer_like": 0.29418084153983887
+      }
+    }
+  ]
+}

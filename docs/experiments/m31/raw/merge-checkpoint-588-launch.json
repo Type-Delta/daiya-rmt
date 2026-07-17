@@ -1,0 +1,35 @@
+{
+  "launcher_pid": 135968,
+  "started_at": "2026-07-11T15:00:44.9903538Z",
+  "job": "m31_merge_and_ct2_conversion",
+  "worktree": "C:\\Users\\Kornnaras\\.codex\\worktrees\\3a6c\\daiya-rmt",
+  "git_commit": "ded7e05df4df86f5d9e747c6267e7ca1d5ea6cef",
+  "python": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\.venv\\Scripts\\python.exe",
+  "runtime": {
+    "python": "3.12.10",
+    "torch": "2.11.0+cu128",
+    "transformers": "4.57.6",
+    "peft": "0.19.1",
+    "ctranslate2": "4.8.0"
+  },
+  "adapter_path": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\full\\largev3-m31-iter1-prompt-terms-gen-gated\\checkpoint-588",
+  "adapter_model_sha256": "0be6f9a2272544cee3f36cb774c2a108af58f32d0c62080514e6bb68fef12594",
+  "arguments": [
+    "-m",
+    "daiya_whisper_lora.cli",
+    "merge",
+    "--adapter-path",
+    "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\full\\largev3-m31-iter1-prompt-terms-gen-gated\\checkpoint-588",
+    "--base-model",
+    "openai/whisper-large-v3",
+    "--merged-output-dir",
+    "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\converted\\checkpoint-588-merged",
+    "--ct2-output-dir",
+    "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\converted\\checkpoint-588-ct2-int8_float16",
+    "--quantization",
+    "int8_float16",
+    "--skip-wer",
+    "--device",
+    "cuda"
+  ]
+}

@@ -1,0 +1,493 @@
+from __future__ import annotations
+
+import importlib.util
+from argparse import Namespace
+from pathlib import Path
+
+import pytest
+
+
+MODULE_PATH = Path(__file__).with_name("asr_eval.py")
+SPEC = importlib.util.spec_from_file_location("asr_eval", MODULE_PATH)
+assert SPEC is not None and SPEC.loader is not None
+asr_eval = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(asr_eval)
+
+
+def make_row(
+    *,
+    sample_id: str,
+    reference: str,
+    hypothesis: str,
+    language: str = "en",
+    mixed_bucket: str = "english",
+    source_file: str = "session-a.wav",
+    source_group: str = "session-a",
+    duration: float = 1.0,
+    latency: float = 0.25,
+    model_name: str = "m2",
+) -> dict:
+    return {
+        "status": "ok",
+        "sample_id": sample_id,
+        "model_name": model_name,
+        "model": {"name": model_name, "path": None, "fingerprint": model_name},
+        "strategy": "isolated",
+        "reference": reference,
+        "hypothesis": hypothesis,
+        "prediction": hypothesis,
+        "language_label": language,
+        "mixed_bucket": mixed_bucket,
+        "source_file": source_file,
+        "source_group": source_group,
+        "speech_duration": duration,
+        "duration_seconds": duration,
+        "latency_seconds": latency,
+        "rtf": latency / duration,
+        "english_terms": [],
+        "prediction_non_thai_english_scripts": {},
+        "metrics": asr_eval.text_metrics(reference, hypothesis),
+        "peak_memory": {"ram_rss_bytes": 1000, "gpu_peak_bytes": 2000},
+        "run": {
+            "dataset_hash": "dataset",
+            "manifest_hash": "manifest",
+            "sample_set_hash": "samples",
+            "decode_config_hash": "decode",
+            "benchmark_fingerprint": "bench",
+            "primary_run": True,
+            "decode_config": {"initial_prompt": None},
+        },
+    }
+
+
+def make_args(tmp_path: Path) -> Namespace:
+    return Namespace(
+        model=None,
+        models=None,
+        models_list=["m2", "m3"],
+        compare_raw=None,
+        limit=None,
+        sample_ids=None,
+        sample_id_field="sample_id",
+        device="cpu",
+        compute_type="default",
+        language=None,
+        initial_prompt=None,
+        include_context_technical_terms=False,
+        beam_size=5,
+        no_condition_on_previous_text=False,
+        strategy="isolated",
+        benchmark_strategies=None,
+        requested_strategies=["isolated"],
+        short_utterance_seconds=3.0,
+        rolling_prompt_turns=3,
+        rolling_prompt_chars=600,
+        left_audio_context_seconds=4.0,
+        context_max_gap_seconds=1.5,
+        merge_max_seconds=12.0,
+        merge_max_chunks=3,
+        dataset_dir=tmp_path,
+        output_dir=tmp_path,
+        manifest=None,
+        split_manifest=None,
+        required_split="benchmark",
+        selection_mode="manifest",
+        bootstrap_samples=100,
+        bootstrap_seed=1234,
+        bootstrap_block_size=8,
+    )
+
+
+def test_manifest_ids_are_enforced_exactly_once(tmp_path: Path) -> None:
+    manifest = tmp_path / "heldout.jsonl"
+    manifest.write_text('{"sample_id":"b"}\n{"sample_id":"a"}\n', encoding="utf-8")
+
+    requested = asr_eval.read_manifest_ids(manifest, "sample_id")
+    metadata = [
+        {"sample_id": "a", "text": "alpha", "_line_number": 1},
+        {"sample_id": "b", "text": "bravo", "_line_number": 2},
+    ]
+
+    selected = asr_eval.select_metadata(metadata, requested, "sample_id")
+
+    assert [row["_sample_id"] for row in selected] == ["b", "a"]
+    with pytest.raises(ValueError, match="duplicate sample IDs"):
+        asr_eval.select_metadata(metadata, ["a", "a"], "sample_id")
+    with pytest.raises(ValueError, match="missing IDs"):
+        asr_eval.select_metadata(metadata, ["missing"], "sample_id")
+    with pytest.raises(ValueError, match="metadata duplicates"):
+        asr_eval.select_metadata(
+            metadata + [{"sample_id": "a", "text": "again"}], ["a"], "sample_id"
+        )
+
+
+def test_micro_aggregation_uses_counts_not_percentage_average() -> None:
+    rows = [
+        make_row(sample_id="a", reference="abcd", hypothesis="abxd"),
+        make_row(
+            sample_id="b", reference="abcdefghijklmnop", hypothesis="abcdefghijklmnop"
+        ),
+    ]
+
+    aggregate = asr_eval.aggregate_metric_rows(rows)
+
+    assert aggregate["cer_edit_count"] == 1
+    assert aggregate["cer_reference_count"] == 20
+    assert aggregate["micro_cer"] == pytest.approx(0.05)
+    assert aggregate["mean_cer"] == pytest.approx(0.125)
+
+
+def test_summary_includes_breakdowns_and_short_utterances(tmp_path: Path) -> None:
+    rows = [
+        make_row(
+            sample_id="a",
+            reference="hello API",
+            hypothesis="hello API",
+            language="thai_english",
+            mixed_bucket="thai_english",
+            source_file="file-a.wav",
+            source_group="group-a",
+            duration=2.0,
+        ),
+        make_row(
+            sample_id="b",
+            reference="good morning",
+            hypothesis="good mourning",
+            language="en",
+            mixed_bucket="english",
+            source_file="file-b.wav",
+            source_group="group-b",
+            duration=5.0,
+            model_name="m3",
+        ),
+        make_row(
+            sample_id="a",
+            reference="hello API",
+            hypothesis="hello API",
+            language="thai_english",
+            mixed_bucket="thai_english",
+            source_file="file-a.wav",
+            source_group="group-a",
+            duration=2.0,
+            model_name="m3",
+        ),
+        make_row(
+            sample_id="b",
+            reference="good morning",
+            hypothesis="good morning",
+            language="en",
+            mixed_bucket="english",
+            source_file="file-b.wav",
+            source_group="group-b",
+            duration=5.0,
+            model_name="m2",
+        ),
+    ]
+
+    run_metadata = dict(rows[0]["run"])
+    run_metadata["decode_config"] = {
+        "language": "th",
+        "include_context_technical_terms": True,
+        "condition_on_previous_text": False,
+        "rolling_prompt_chars": 512,
+    }
+    summary = asr_eval.build_summary(
+        args=make_args(tmp_path),
+        status="ok",
+        run_id="run",
+        details_path=tmp_path / "details.jsonl",
+        summary_path=tmp_path / "summary.json",
+        rows_seen=2,
+        details=rows,
+        started_at="2026-07-10T00:00:00+00:00",
+        elapsed_seconds=1.0,
+        run_metadata=run_metadata,
+    )
+
+    assert summary["short_utterance_subset"]["count"] == 2
+    assert set(summary["by_mixed_bucket"]) == {"english", "thai_english"}
+    assert set(summary["by_source_group"]) == {"group-a", "group-b"}
+    assert set(summary["by_model"]) == {"m2", "m3"}
+    assert summary["overall"]["peak_gpu_bytes"] == 2000
+    assert "m2__minus__m3" in summary["paired_model_deltas"]["isolated"]
+    assert summary["language"] == "th"
+    assert summary["include_context_technical_terms"] is True
+    assert summary["condition_on_previous_text"] is False
+    assert summary["rolling_prompt_chars"] == 512
+
+
+def test_bootstrap_confidence_intervals_are_deterministic() -> None:
+    rows = [
+        make_row(sample_id="a", reference="abcd", hypothesis="abxd"),
+        make_row(sample_id="b", reference="wxyz", hypothesis="wxyz"),
+        make_row(sample_id="c", reference="hello", hypothesis="hallo"),
+    ]
+
+    first = asr_eval.bootstrap_micro_ci(rows, metric="cer", samples=200, seed=99)
+    second = asr_eval.bootstrap_micro_ci(rows, metric="cer", samples=200, seed=99)
+
+    assert first == second
+    assert first["p2_5"] <= first["p50"] <= first["p97_5"]
+    assert first["method"] == "contiguous_moving_block_bootstrap"
+    assert first["block_size"] == 8
+
+
+def test_contiguous_block_resampling_preserves_fixed_blocks() -> None:
+    indices = asr_eval.contiguous_block_indices(10, 3, asr_eval.random.Random(4))
+
+    assert len(indices) == 10
+    assert all(indices[index + 1] == indices[index] + 1 for index in (0, 1, 3, 4, 6, 7))
+
+
+def test_raw_comparison_rejects_incompatible_fingerprints(tmp_path: Path) -> None:
+    compatible = make_row(sample_id="a", reference="abc", hypothesis="abc")
+    incompatible = make_row(sample_id="a", reference="abc", hypothesis="abc")
+    incompatible["run"] = {**incompatible["run"], "manifest_hash": "different"}
+
+    with pytest.raises(ValueError, match="manifest_hash differs"):
+        asr_eval.assert_compatible_raw_outputs(
+            {
+                tmp_path / "m2.jsonl": [compatible],
+                tmp_path / "m3.jsonl": [incompatible],
+            }
+        )
+
+
+def test_paired_bootstrap_delta_is_deterministic_and_rejects_mismatch() -> None:
+    left = [
+        make_row(sample_id="a", reference="abcd", hypothesis="abxd", model_name="m2"),
+        make_row(sample_id="b", reference="wxyz", hypothesis="wxyz", model_name="m2"),
+    ]
+    right = [
+        make_row(sample_id="a", reference="abcd", hypothesis="abcd", model_name="m3"),
+        make_row(sample_id="b", reference="wxyz", hypothesis="wxyz", model_name="m3"),
+    ]
+    first = asr_eval.paired_bootstrap_delta(
+        left, right, metric="cer", samples=200, seed=7
+    )
+    second = asr_eval.paired_bootstrap_delta(
+        left, right, metric="cer", samples=200, seed=7
+    )
+    assert first == second
+    assert first["left_minus_right"] > 0
+    assert first["method"] == "paired_contiguous_moving_block_bootstrap"
+    with pytest.raises(ValueError, match="sample sets differ"):
+        asr_eval.paired_bootstrap_delta(
+            left, right[:1], metric="cer", samples=10, seed=7
+        )
+
+
+def test_split_manifest_linkage_and_rolling_order(tmp_path: Path) -> None:
+    split_manifest = tmp_path / "split.jsonl"
+    split_manifest.write_text(
+        '{"source_file":"call-a.wav","split":"benchmark"}\n'
+        '{"source_file":"call-b.wav","split":"train"}\n',
+        encoding="utf-8",
+    )
+    selected = [
+        {
+            "_sample_id": "a1",
+            "source_file": r"C:\\raw\\call-a.wav",
+            "source_start": 1.0,
+            "file_name": "train/a1.wav",
+        },
+        {
+            "_sample_id": "a2",
+            "source_file": r"C:\\raw\\call-a.wav",
+            "source_start": 2.0,
+            "file_name": "train/a2.wav",
+        },
+    ]
+    identity = asr_eval.validate_selected_split(selected, split_manifest, "benchmark")
+    assert identity["validated_count"] == 2
+    asr_eval.validate_rolling_order(selected)
+
+    with pytest.raises(ValueError, match="belongs to split"):
+        asr_eval.validate_selected_split(
+            [{**selected[0], "_sample_id": "b1", "source_file": "call-b.wav"}],
+            split_manifest,
+            "benchmark",
+        )
+    with pytest.raises(ValueError, match="out of source-time order"):
+        asr_eval.validate_rolling_order([selected[1], selected[0]])
+
+
+def test_context_terms_prompt_is_opt_in_and_causal(tmp_path: Path) -> None:
+    args = make_args(tmp_path)
+    args.initial_prompt = "Base"
+    row = {
+        "context_before": "Deploy Kubernetes with CUDA_API.",
+        "context_after": "SECRET_AFTER_TERM",
+        "text": "REFERENCE_LEAK",
+    }
+
+    assert asr_eval.build_common_prompt(args, [row]) == "Base"
+    args.include_context_technical_terms = True
+    prompt = asr_eval.build_common_prompt(args, [row])
+
+    assert prompt is not None
+    assert "Kubernetes" in prompt and "CUDA_API" in prompt
+    assert "SECRET_AFTER_TERM" not in prompt and "REFERENCE_LEAK" not in prompt
+    assert "Previous transcript: recent hypothesis" in asr_eval.build_rolling_prompt(
+        args, ["recent hypothesis"], [row]
+    )
+
+
+def test_rolling_prompt_resets_on_source_time_gap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = make_args(tmp_path)
+    args.requested_strategies = ["rolling_initial_prompt"]
+    audio = tmp_path / "chunk.wav"
+    audio.write_bytes(b"not read by mocked transcription")
+    rows = [
+        {
+            "_sample_id": "a",
+            "_line_number": 1,
+            "file_name": audio.name,
+            "source_file": "session.wav",
+            "source_start": 0.0,
+            "source_end": 1.0,
+            "text": "one",
+        },
+        {
+            "_sample_id": "b",
+            "_line_number": 2,
+            "file_name": audio.name,
+            "source_file": "session.wav",
+            "source_start": 5.0,
+            "source_end": 6.0,
+            "text": "two",
+        },
+    ]
+    prompts = []
+
+    def fake_transcribe(
+        _model, _path, _args, *, initial_prompt=None, include_after_seconds=None
+    ):
+        prompts.append(initial_prompt)
+        return f"hypothesis-{len(prompts)}", {"elapsed_seconds": 0.1, "peak_memory": {}}
+
+    monkeypatch.setattr(asr_eval, "transcribe_one", fake_transcribe)
+    details = asr_eval.evaluate_single_chunk_strategy(
+        model=object(),
+        model_info={"name": "m2"},
+        metadata=rows,
+        args=args,
+        strategy="rolling_initial_prompt",
+        temp_dir=tmp_path,
+        run_metadata={"decode_config": {}},
+    )
+
+    assert [row["status"] for row in details] == ["ok", "ok"]
+    assert prompts == [None, None]
+
+
+def test_output_completeness_requires_exact_ok_cartesian_product() -> None:
+    metadata = [{"_sample_id": "a"}, {"_sample_id": "b"}]
+    complete = [
+        {
+            "model_name": "m",
+            "strategy": "isolated",
+            "sample_id": sample_id,
+            "status": "ok",
+        }
+        for sample_id in ("a", "b")
+    ]
+
+    assert (
+        asr_eval.output_completeness_error(complete, ["m"], ["isolated"], metadata)
+        is None
+    )
+    assert "expected exactly 2" in asr_eval.output_completeness_error(
+        complete[:1], ["m"], ["isolated"], metadata
+    )
+    failed = [{**complete[0], "status": "transcribe_failed"}, complete[1]]
+    assert "non_ok" in asr_eval.output_completeness_error(
+        failed, ["m"], ["isolated"], metadata
+    )
+
+
+def test_memory_aggregation_labels_endpoint_snapshots_honestly() -> None:
+    aggregate = asr_eval.aggregate_memory_rows(
+        [make_row(sample_id="a", reference="a", hypothesis="a")]
+    )
+
+    assert aggregate["memory_aggregation_method"] == "max_endpoint_snapshots"
+    assert (
+        aggregate["max_endpoint_ram_rss_bytes"]
+        == aggregate["peak_ram_rss_bytes"]
+        == 1000
+    )
+
+
+def test_main_fails_summary_when_faster_whisper_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = make_args(tmp_path)
+    args.model = "m2"
+    args.models_list = ["m2"]
+    (tmp_path / "metadata.jsonl").write_text(
+        '{"sample_id":"a","file_name":"a.wav","text":"hello"}\n', encoding="utf-8"
+    )
+    monkeypatch.setattr(asr_eval, "parse_args", lambda: args)
+    monkeypatch.setattr(asr_eval, "load_faster_whisper", lambda: None)
+
+    exit_code = asr_eval.main()
+    summaries = list(tmp_path.glob("summary_*.json"))
+
+    assert exit_code == 1
+    assert len(summaries) == 1
+    assert (
+        asr_eval.json.loads(summaries[0].read_text(encoding="utf-8"))["status"]
+        == "failed"
+    )
+
+
+def test_model_set_suffix_is_short_and_deterministic() -> None:
+    models = [
+        rf"C:\very\long\model-root\{'segment-' * 20}{index}\model.bin"
+        for index in range(4)
+    ]
+
+    suffix = asr_eval.model_set_suffix(models)
+
+    assert suffix == asr_eval.model_set_suffix(list(models))
+    assert suffix.startswith("models-4-")
+    assert len(suffix) < 32
+    assert (
+        asr_eval.model_set_suffix([r"C:\runs\checkpoint-588-ct2"])
+        == "checkpoint-588-ct2"
+    )
+
+
+def test_model_strategy_summaries_keep_cells_separate() -> None:
+    rows = [
+        {
+            **make_row(
+                sample_id=f"{model}-{strategy}", reference="ab", hypothesis=hypothesis
+            ),
+            "model_name": model,
+            "strategy": strategy,
+            "language_label": "Thai",
+            "mixed_bucket": "mixed",
+        }
+        for model, strategy, hypothesis in (
+            ("m2", "isolated", "a"),
+            ("m2", "rolling_initial_prompt", "ab"),
+            ("m3", "isolated", "ab"),
+            ("m3", "rolling_initial_prompt", "a"),
+        )
+    ]
+
+    summaries = asr_eval.model_strategy_summaries(
+        rows,
+        short_utterance_seconds=3.0,
+        bootstrap_samples=10,
+        bootstrap_seed=7,
+        bootstrap_block_size=2,
+    )
+
+    assert summaries["m2"]["isolated"]["overall"]["micro_cer"] == 0.5
+    assert summaries["m2"]["rolling_initial_prompt"]["overall"]["micro_cer"] == 0.0
+    assert summaries["m3"]["isolated"]["by_language"]["Thai"]["count"] == 1

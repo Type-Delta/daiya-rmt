@@ -3,3 +3,5 @@ outputs/
 checkpoints/
 wandb/
 *.log
+.test-tmp/
+.uv-cache/

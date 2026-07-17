@@ -1,0 +1,8 @@
+{
+  "launcher_pid": 130064,
+  "completed_at": "2026-07-11T15:02:55.8592029Z",
+  "exit_code": 0,
+  "merged_output_dir": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\converted\\checkpoint-500-merged",
+  "ct2_output_dir": "C:\\JokaMain\\ProjectShowRoom\\daiya-rmt\\training\\whisper\\runs\\m3.1\\converted\\checkpoint-500-ct2-int8_float16",
+  "ct2_model_sha256": "dd94e34e7cb0c67c86520ce2460feee0701dc78bfdd663d9a1a1dd859b2739ae"
+}
