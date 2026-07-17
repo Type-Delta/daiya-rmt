@@ -72,6 +72,7 @@ class ContextAwareASRTests(unittest.TestCase):
         self.assertFalse(config.asr_left_context_enabled)
         self.assertFalse(config.asr_delayed_correction_enabled)
         self.assertFalse(config.asr_tiny_utterance_merge_enabled)
+        self.assertFalse(config.asr_right_context_enabled)
 
     def test_prompt_memory_filters_control_labels_from_terms(self) -> None:
         memory = ASRPromptMemory(static_prompt="Terms: AI, Topic: founder project")
@@ -226,6 +227,131 @@ class ContextAwareASRTests(unittest.TestCase):
 
         self.assertEqual(stub.calls, 2)
         self.assertEqual(payloads[0]["text"], "percent")
+
+    def test_right_context_waits_until_future_audio_is_available(self) -> None:
+        pipeline = StreamingPipeline(
+            PipelineConfig(
+                enable_asr=False,
+                enable_diarization=False,
+                asr_right_context_enabled=True,
+                asr_right_context_seconds=0.5,
+                asr_right_context_max_latency_seconds=1.0,
+            )
+        )
+
+        class StubASR:
+            def __init__(self) -> None:
+                self.right_context_lengths: list[int | None] = []
+
+            def transcribe_utterance(self, utterance: Utterance, **kwargs: object) -> list[ASRSegment]:
+                context = kwargs.get("right_context_samples")
+                self.right_context_lengths.append(None if context is None else len(context))  # type: ignore[arg-type]
+                return [ASRSegment(start=utterance.start, end=utterance.end, text="target")]
+
+        stub = StubASR()
+        pipeline.asr = stub  # type: ignore[assignment]
+        utterance = Utterance(samples=np.ones(SAMPLE_RATE, dtype=np.float32), start=0.0, end=1.0)
+        pipeline._remember_audio(PCMChunk(samples=np.ones(SAMPLE_RATE, dtype=np.float32), start_time=0.0))
+
+        self.assertEqual(pipeline._handle_utterance(utterance), [])
+        self.assertEqual(stub.right_context_lengths, [])
+
+        pipeline._remember_audio(PCMChunk(samples=np.ones(int(0.25 * SAMPLE_RATE), dtype=np.float32), start_time=1.0))
+        self.assertEqual(pipeline._release_ready_right_context(1.25), [])
+
+        pipeline._remember_audio(
+            PCMChunk(samples=np.ones(int(0.25 * SAMPLE_RATE), dtype=np.float32), start_time=1.25)
+        )
+        payloads = pipeline._release_ready_right_context(1.5)
+
+        self.assertEqual(payloads[0]["text"], "target")
+        self.assertEqual(stub.right_context_lengths, [int(0.5 * SAMPLE_RATE)])
+
+    def test_right_context_latency_cap_releases_partial_future_audio(self) -> None:
+        pipeline = StreamingPipeline(
+            PipelineConfig(
+                enable_asr=False,
+                enable_diarization=False,
+                asr_right_context_enabled=True,
+                asr_right_context_seconds=1.0,
+                asr_right_context_max_latency_seconds=0.25,
+            )
+        )
+
+        class StubASR:
+            def __init__(self) -> None:
+                self.right_context_lengths: list[int | None] = []
+
+            def transcribe_utterance(self, utterance: Utterance, **kwargs: object) -> list[ASRSegment]:
+                context = kwargs.get("right_context_samples")
+                self.right_context_lengths.append(None if context is None else len(context))  # type: ignore[arg-type]
+                return [ASRSegment(start=utterance.start, end=utterance.end, text="capped")]
+
+        stub = StubASR()
+        pipeline.asr = stub  # type: ignore[assignment]
+        utterance = Utterance(samples=np.ones(SAMPLE_RATE, dtype=np.float32), start=0.0, end=1.0)
+        pipeline._remember_audio(PCMChunk(samples=np.ones(SAMPLE_RATE, dtype=np.float32), start_time=0.0))
+
+        self.assertEqual(pipeline._handle_utterance(utterance), [])
+        pipeline._remember_audio(PCMChunk(samples=np.ones(int(0.25 * SAMPLE_RATE), dtype=np.float32), start_time=1.0))
+        payloads = pipeline._release_ready_right_context(1.25)
+
+        self.assertEqual(payloads[0]["text"], "capped")
+        self.assertEqual(stub.right_context_lengths, [int(0.25 * SAMPLE_RATE)])
+
+    def test_right_context_flush_drains_deferred_final_utterance(self) -> None:
+        pipeline = StreamingPipeline(
+            PipelineConfig(
+                enable_asr=False,
+                enable_diarization=False,
+                asr_right_context_enabled=True,
+                asr_right_context_seconds=0.5,
+            )
+        )
+
+        class StubSegmenter:
+            def flush(self) -> list[Utterance]:
+                return []
+
+        class StubASR:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def transcribe_utterance(self, utterance: Utterance, **_kwargs: object) -> list[ASRSegment]:
+                self.calls += 1
+                return [ASRSegment(start=utterance.start, end=utterance.end, text="flushed")]
+
+        stub = StubASR()
+        pipeline.segmenter = StubSegmenter()  # type: ignore[assignment]
+        pipeline.asr = stub  # type: ignore[assignment]
+        utterance = Utterance(samples=np.ones(SAMPLE_RATE, dtype=np.float32), start=0.0, end=1.0)
+        pipeline._pending_right_context = [utterance]
+        pipeline._remember_audio(PCMChunk(samples=np.ones(SAMPLE_RATE, dtype=np.float32), start_time=0.0))
+
+        payloads = pipeline.flush()
+
+        self.assertEqual(stub.calls, 1)
+        self.assertEqual(payloads[0]["text"], "flushed")
+        self.assertEqual(pipeline._pending_right_context, [])
+
+    def test_right_context_disables_left_context_retry_when_both_flags_are_set(self) -> None:
+        pipeline = StreamingPipeline(
+            PipelineConfig(
+                enable_asr=False,
+                enable_diarization=False,
+                asr_left_context_enabled=True,
+                asr_right_context_enabled=True,
+            )
+        )
+
+        utterance = Utterance(samples=np.ones(int(0.5 * SAMPLE_RATE), dtype=np.float32), start=1.0, end=1.5)
+
+        self.assertFalse(
+            pipeline._should_retry_with_left_context(
+                utterance,
+                [ASRSegment(start=1.0, end=1.5, text="low", confidence=-2.0)],
+            )
+        )
 
 
 if __name__ == "__main__":

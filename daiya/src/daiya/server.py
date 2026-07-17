@@ -335,6 +335,8 @@ def _config_from_dict(data: dict[str, Any]) -> PipelineConfig:
         "asr_tiny_utterance_seconds",
         "asr_tiny_utterance_max_gap_seconds",
         "asr_tiny_utterance_max_delay_seconds",
+        "asr_right_context_seconds",
+        "asr_right_context_max_latency_seconds",
     ):
         if key in filtered:
             filtered[key] = float(filtered[key])
@@ -349,6 +351,7 @@ def _config_from_dict(data: dict[str, Any]) -> PipelineConfig:
         "initial_prompt",
         "diarization_profile",
         "diarization_backend",
+        "asr_right_context_strategy",
     ):
         if key in filtered:
             filtered[key] = str(filtered[key])
@@ -359,6 +362,7 @@ def _config_from_dict(data: dict[str, Any]) -> PipelineConfig:
         "asr_left_context_enabled",
         "asr_delayed_correction_enabled",
         "asr_tiny_utterance_merge_enabled",
+        "asr_right_context_enabled",
     ):
         if key in filtered:
             filtered[key] = str(filtered[key]).lower() not in {"0", "false", "no", "off"}

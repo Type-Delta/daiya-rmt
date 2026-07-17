@@ -29,6 +29,7 @@ STRATEGIES = {
     "isolated",
     "rolling_initial_prompt",
     "left_audio_context",
+    "right_audio_context",
     "merged_deferred_short",
 }
 TECHNICAL_TERM_RE = re.compile(r"[A-Za-z][A-Za-z0-9_+#.-]*")
@@ -137,7 +138,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Comma-separated strategies to compare in one run, e.g. "
-            "isolated,rolling_initial_prompt,left_audio_context,merged_deferred_short."
+            "isolated,rolling_initial_prompt,left_audio_context,right_audio_context,merged_deferred_short."
         ),
     )
     parser.add_argument(
@@ -163,6 +164,12 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=4.0,
         help="Maximum previous chunk audio seconds prepended for left_audio_context.",
+    )
+    parser.add_argument(
+        "--right-audio-context-seconds",
+        type=float,
+        default=0.8,
+        help="Maximum following chunk audio seconds appended for right_audio_context.",
     )
     parser.add_argument(
         "--context-max-gap-seconds",
@@ -553,6 +560,7 @@ def build_summary(
         "rolling_prompt_turns": args.rolling_prompt_turns,
         "rolling_prompt_chars": args.rolling_prompt_chars,
         "left_audio_context_seconds": args.left_audio_context_seconds,
+        "right_audio_context_seconds": args.right_audio_context_seconds,
         "context_max_gap_seconds": args.context_max_gap_seconds,
         "merge_max_seconds": args.merge_max_seconds,
         "merge_max_chunks": args.merge_max_chunks,
@@ -619,6 +627,7 @@ def transcribe_one(
     *,
     initial_prompt: str | None = None,
     include_after_seconds: float | None = None,
+    include_before_seconds: float | None = None,
 ) -> tuple[str, dict[str, Any]]:
     started = time.perf_counter()
     segments, info = model.transcribe(
@@ -627,7 +636,7 @@ def transcribe_one(
         initial_prompt=args.initial_prompt if initial_prompt is None else initial_prompt,
         beam_size=args.beam_size,
         condition_on_previous_text=not args.no_condition_on_previous_text,
-        word_timestamps=include_after_seconds is not None,
+        word_timestamps=include_after_seconds is not None or include_before_seconds is not None,
     )
     segment_rows = []
     text_parts = []
@@ -635,14 +644,17 @@ def transcribe_one(
         text = segment.text.strip()
         start = getattr(segment, "start", None)
         end = getattr(segment, "end", None)
-        included = include_after_seconds is None or (isinstance(end, int | float) and end >= include_after_seconds)
+        included = timestamp_in_prediction_window(start, end, include_after_seconds, include_before_seconds)
         words = []
         word_text_parts = []
         for word in getattr(segment, "words", None) or []:
             word_start = getattr(word, "start", None)
             word_end = getattr(word, "end", None)
-            word_included = include_after_seconds is None or (
-                isinstance(word_end, int | float) and word_end >= include_after_seconds
+            word_included = timestamp_in_prediction_window(
+                word_start,
+                word_end,
+                include_after_seconds,
+                include_before_seconds,
             )
             word_text = str(getattr(word, "word", "")).strip()
             if word_text and word_included:
@@ -682,6 +694,33 @@ def transcribe_one(
     return normalize_thai_spacing(" ".join(text_parts)), info_row
 
 
+def timestamp_in_prediction_window(
+    start: Any,
+    end: Any,
+    include_after_seconds: float | None,
+    include_before_seconds: float | None,
+) -> bool:
+    if isinstance(start, int | float) and isinstance(end, int | float):
+        if include_after_seconds is not None and end <= include_after_seconds:
+            return False
+        if include_before_seconds is not None and start >= include_before_seconds:
+            return False
+        return True
+    if include_after_seconds is not None:
+        if isinstance(end, int | float):
+            if end <= include_after_seconds:
+                return False
+        elif not isinstance(start, int | float) or start < include_after_seconds:
+            return False
+    if include_before_seconds is not None:
+        if isinstance(start, int | float):
+            if start >= include_before_seconds:
+                return False
+        elif not isinstance(end, int | float) or end > include_before_seconds:
+            return False
+    return True
+
+
 def source_gap_seconds(left: dict[str, Any], right: dict[str, Any]) -> float | None:
     left_end = left.get("source_end")
     right_start = right.get("source_start")
@@ -718,6 +757,32 @@ def concatenate_wavs(paths: list[Path], output_path: Path) -> list[float]:
                     raise ValueError(f"WAV parameters differ for {path}")
                 output.writeframes(source.readframes(source.getnframes()))
                 durations.append(source.getnframes() / source.getframerate())
+    return durations
+
+
+def concatenate_wav_segments(segments: list[tuple[Path, float | None]], output_path: Path) -> list[float]:
+    durations: list[float] = []
+    params = None
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(output_path), "wb") as output:
+        for path, max_seconds in segments:
+            with wave.open(str(path), "rb") as source:
+                source_params = source.getparams()
+                comparable_params = source_params[:3] + source_params[4:]
+                if params is None:
+                    params = comparable_params
+                    output.setparams(source_params)
+                elif comparable_params != params:
+                    raise ValueError(f"WAV parameters differ for {path}")
+
+                frame_rate = source.getframerate()
+                total_frames = source.getnframes()
+                if max_seconds is None:
+                    frames_to_read = total_frames
+                else:
+                    frames_to_read = min(total_frames, max(0, int(round(max_seconds * frame_rate))))
+                output.writeframes(source.readframes(frames_to_read))
+                durations.append(frames_to_read / frame_rate if frame_rate > 0 else 0.0)
     return durations
 
 
@@ -805,6 +870,7 @@ def evaluate_single_chunk_strategy(
             prompt = args.initial_prompt
             transcribe_path = audio_path
             include_after_seconds = None
+            include_before_seconds = None
             if strategy == "rolling_initial_prompt":
                 prompt = build_rolling_prompt(args, previous_predictions)
                 base_detail["rolling_prompt"] = prompt
@@ -847,6 +913,67 @@ def evaluate_single_chunk_strategy(
                         "file_names": [candidate.get("file_name") for _row_index, candidate, _path in context_records],
                         "audio_seconds": include_after_seconds,
                     }
+            elif strategy == "right_audio_context" and args.right_audio_context_seconds > 0:
+                context_records: list[tuple[int, dict[str, Any], Path, float]] = []
+                context_seconds = 0.0
+                cursor = index
+                while cursor < len(metadata) and context_seconds < args.right_audio_context_seconds:
+                    candidate = metadata[cursor]
+                    previous = metadata[cursor - 1]
+                    if not same_source(previous, candidate):
+                        break
+                    gap = source_gap_seconds(previous, candidate)
+                    if gap is not None and gap > args.context_max_gap_seconds:
+                        break
+                    candidate_path = resolve_audio_path(args.dataset_dir, candidate)
+                    if candidate_path is None or not candidate_path.exists():
+                        break
+                    duration = wav_duration(candidate_path)
+                    remaining_seconds = args.right_audio_context_seconds - context_seconds
+                    borrowed_seconds = min(duration, remaining_seconds)
+                    if borrowed_seconds <= 0:
+                        break
+                    context_records.append((cursor + 1, candidate, candidate_path, borrowed_seconds))
+                    context_seconds += borrowed_seconds
+                    if borrowed_seconds < duration:
+                        break
+                    cursor += 1
+
+                if context_records:
+                    concat_path = temp_dir / f"right-context-{index:05d}.wav"
+                    durations = concatenate_wav_segments(
+                        [(audio_path, None)]
+                        + [
+                            (path, borrowed_seconds)
+                            for _row_index, _candidate, path, borrowed_seconds in context_records
+                        ],
+                        concat_path,
+                    )
+                    include_before_seconds = durations[0]
+                    transcribe_path = concat_path
+                    borrowed_details = [
+                        {
+                            "row_index": row_index,
+                            "metadata_line_number": candidate.get("_line_number"),
+                            "file_name": candidate.get("file_name"),
+                            "audio_seconds": durations[detail_index + 1],
+                        }
+                        for detail_index, (row_index, candidate, _path, _borrowed_seconds) in enumerate(
+                            context_records
+                        )
+                    ]
+                    base_detail["right_audio_context"] = {
+                        "requested_audio_seconds": args.right_audio_context_seconds,
+                        "metadata_line_numbers": [
+                            candidate.get("_line_number") for _row_index, candidate, _path, _seconds in context_records
+                        ],
+                        "file_names": [
+                            candidate.get("file_name") for _row_index, candidate, _path, _seconds in context_records
+                        ],
+                        "target_audio_seconds": durations[0],
+                        "audio_seconds": sum(durations[1:]),
+                        "borrowed": borrowed_details,
+                    }
 
             prediction, transcribe_info = transcribe_one(
                 model,
@@ -854,6 +981,7 @@ def evaluate_single_chunk_strategy(
                 args,
                 initial_prompt=prompt,
                 include_after_seconds=include_after_seconds,
+                include_before_seconds=include_before_seconds,
             )
             detail = score_prediction(base_detail, prediction, transcribe_info)
             previous_predictions.append(prediction)

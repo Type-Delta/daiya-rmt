@@ -151,6 +151,7 @@ class FasterWhisperASR:
         language: str | None = None,
         initial_prompt: str | None = None,
         left_context_samples: np.ndarray | None = None,
+        right_context_samples: np.ndarray | None = None,
     ) -> list[ASRSegment]:
         utterance_audio = ensure_mono_float32(utterance.samples)
         if utterance_audio.size == 0:
@@ -165,6 +166,12 @@ class FasterWhisperASR:
                 audio = np.concatenate([left_context, utterance_audio])
                 left_context_duration = left_context.size / SAMPLE_RATE
                 offset = utterance.start - left_context_duration
+                clip_start = utterance.start
+                clip_end = utterance.end
+        if right_context_samples is not None:
+            right_context = ensure_mono_float32(right_context_samples)
+            if right_context.size:
+                audio = np.concatenate([audio, right_context])
                 clip_start = utterance.start
                 clip_end = utterance.end
         segments, _info = self._model.transcribe(
