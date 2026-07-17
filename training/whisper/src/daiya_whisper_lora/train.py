@@ -21,6 +21,16 @@ from transformers import (
     WhisperProcessor,
 )
 
+from .prompt_conditioning import (
+    PromptConditioningConfig,
+    build_decoder_inputs_and_labels,
+    build_prompt_text,
+    build_prompted_labels,
+    encode_prompt_token_ids,
+    parse_prompt_fields,
+    validate_prompt_config,
+)
+
 console = Console()
 
 LANGUAGE_ALIASES = {
@@ -85,6 +95,11 @@ class TrainingConfig:
     resume_from_checkpoint: bool = False
     push_to_hub: bool = False
     hub_model_id: str | None = None
+    prompt_conditioning: bool = False
+    prompt_max_tokens: int = 64
+    prompt_fields: tuple[str, ...] = ("context_before",)
+    prompt_terms_only: bool = True
+    prompt_allow_future_context: bool = False
 
 
 @dataclass
@@ -97,7 +112,41 @@ class DataCollatorSpeechSeq2SeqWithPadding:
 
         label_features = [{"input_ids": feature["labels"]} for feature in features]
         labels_batch = self.processor.tokenizer.pad(label_features, return_tensors="pt")
-        labels = labels_batch["input_ids"].masked_fill(labels_batch.attention_mask.ne(1), -100)
+        unmasked_labels = labels_batch["input_ids"]
+        labels = unmasked_labels.masked_fill(labels_batch.attention_mask.ne(1), -100)
+
+        prompt_label_lengths = [int(feature.get("prompt_label_length", 0) or 0) for feature in features]
+        if any(prompt_label_lengths):
+            pad_token_id = self.processor.tokenizer.pad_token_id
+            decoder_input_ids: list[list[int]] = []
+            prompted_labels: list[list[int]] = []
+            for row, attention_mask, prompt_label_length in zip(
+                unmasked_labels.tolist(),
+                labels_batch.attention_mask.tolist(),
+                prompt_label_lengths,
+                strict=True,
+            ):
+                row_length = int(sum(attention_mask))
+                decoder_row, label_row = build_decoder_inputs_and_labels(
+                    row[:row_length],
+                    prompt_label_length=prompt_label_length,
+                    pad_token_id=pad_token_id,
+                )
+                padding_length = len(row) - row_length
+                decoder_input_ids.append([*decoder_row, *([pad_token_id] * padding_length)])
+                prompted_labels.append([*label_row, *([-100] * padding_length)])
+
+            batch["decoder_input_ids"] = torch.tensor(
+                decoder_input_ids,
+                dtype=unmasked_labels.dtype,
+                device=unmasked_labels.device,
+            )
+            batch["labels"] = torch.tensor(
+                prompted_labels,
+                dtype=labels.dtype,
+                device=labels.device,
+            )
+            return batch
 
         if (labels[:, 0] == self.processor.tokenizer.bos_token_id).all().cpu().item():
             labels = labels[:, 1:]
@@ -259,6 +308,9 @@ def prepare_dataset(config: TrainingConfig, processor: WhisperProcessor) -> Data
     if config.language_policy not in {"metadata", "global", "none"}:
         raise ValueError(f"Unsupported language policy: {config.language_policy}")
 
+    prompt_config = build_prompt_conditioning_config(config)
+    validate_prompt_config(prompt_config)
+
     dataset = load_audiofolder_dataset(config.dataset_dir)
 
     if "validation" not in dataset:
@@ -289,7 +341,24 @@ def prepare_dataset(config: TrainingConfig, processor: WhisperProcessor) -> Data
         ).input_features[0]
         language = language_for_example(example, config)
         processor.tokenizer.set_prefix_tokens(language=language, task=config.task)
-        example["labels"] = processor.tokenizer(example["text"]).input_ids
+        transcript_labels = processor.tokenizer(example["text"]).input_ids
+        if prompt_config.enabled:
+            prompt_text = build_prompt_text(example, prompt_config)
+            prompt_token_ids = encode_prompt_token_ids(
+                processor.tokenizer,
+                prompt_text,
+                prompt_config.max_prompt_tokens,
+            )
+            prompted = build_prompted_labels(
+                transcript_label_ids=transcript_labels,
+                prompt_token_ids=prompt_token_ids,
+                max_label_length=config.max_label_length,
+                bos_token_id=processor.tokenizer.bos_token_id,
+            )
+            example["labels"] = prompted.labels
+            example["prompt_label_length"] = prompted.prompt_label_length
+        else:
+            example["labels"] = transcript_labels
         return example
 
     # ponytail: disk-backed feature cache; in-memory map holds ~8GB of mels and OOMs the box
@@ -313,6 +382,16 @@ def prepare_dataset(config: TrainingConfig, processor: WhisperProcessor) -> Data
     )
 
     return dataset
+
+
+def build_prompt_conditioning_config(config: TrainingConfig) -> PromptConditioningConfig:
+    return PromptConditioningConfig(
+        enabled=config.prompt_conditioning,
+        max_prompt_tokens=config.prompt_max_tokens,
+        fields=parse_prompt_fields(config.prompt_fields),
+        terms_only=config.prompt_terms_only,
+        allow_future_context=config.prompt_allow_future_context,
+    )
 
 
 def language_for_example(example: dict[str, Any], config: TrainingConfig) -> str | None:
