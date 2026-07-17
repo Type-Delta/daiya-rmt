@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "datasets>=3.6.0,<4.0.0",
+    "faster-whisper>=1.1.0,<2.0.0",
     "numpy>=2.2.0",
     "openai>=1.86.0",
     "pyannote.audio>=4.0.4,<5.0.0",

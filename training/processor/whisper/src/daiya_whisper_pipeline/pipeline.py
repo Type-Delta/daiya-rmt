@@ -7,6 +7,7 @@ from tqdm import tqdm
 
 from .config import PipelineConfig, ensure_dirs
 from .diarization import OverlapDetector
+from .evidence import TimestampEvidenceStage
 from .export import export_audiofolder
 from .ffmpeg import export_chunk, normalize_audio_files
 from .llm import OpenRouterAudioTranscriber, transcribe_chunks
@@ -30,17 +31,21 @@ def run_pipeline(config: PipelineConfig) -> None:
 
     vad = SileroVad(config)
     overlap = OverlapDetector(config)
+    evidence_stage = TimestampEvidenceStage(config)
 
     chunks = []
     for audio in tqdm(normalized, desc="segment"):
         speech = vad.detect(audio.normalized_path)
         dirty = overlap.detect(audio.normalized_path)
-        audio_chunks = build_chunks(audio, speech, dirty, config)
+        evidence = evidence_stage.collect(audio)
+        if evidence.status != "ok":
+            console.print(f"[yellow]Timestamp evidence {evidence.status} for {audio.source_path.name}: {evidence.failure or 'no words'}[/yellow]")
+        audio_chunks = build_chunks(audio, speech, dirty, config, evidence)
         for chunk in audio_chunks:
             export_chunk(chunk, config)
         chunks.extend(audio_chunks)
 
-    console.print(f"[bold]Built {len(chunks)} contiguous wall-clock chunks[/bold]")
+    console.print(f"[bold]Built {len(chunks)} disjoint ownership chunks[/bold]")
     if not chunks:
         raise RuntimeError("No chunks survived VAD/overlap filtering")
 

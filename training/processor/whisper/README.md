@@ -22,15 +22,16 @@ GPU inference is sequential by design: Silero VAD and the pyannote overlap detec
 
 ## Segmentation and migration safety
 
-The offline processor exports **contiguous wall-clock windows**. VAD only selects a window; it never causes separate speech islands to be concatenated. Brief natural pauses and short VAD false-negative gaps therefore remain audible to the labeling model.
+The offline processor exports **contiguous, owned wall-clock windows**. VAD only selects a window; it never causes separate speech islands to be concatenated. Brief natural pauses and short VAD false-negative gaps therefore remain audible to the labeling model.
 
 - The default offline profile is `threshold=0.5`, `min speech=250 ms`, `min silence=150 ms`, and `speech pad=80 ms`. The source-11 benchmark retained it because the new wall-clock construction achieved zero missed human-reference speech with fewer context fallbacks than the PR #10 profile variants; boundary padding remains configurable for recordings that need more lead/trail context.
 - `DAIYA_MERGE_GAP_SECONDS` (default `0.8`) bridges nearby VAD islands into a single source window and preserves the gap in the WAV.
-- Long windows look for an actual silence (`DAIYA_BOUNDARY_MIN_SILENCE_SECONDS`, default `0.5`) near the 18-second target, within `DAIYA_BOUNDARY_SEARCH_SECONDS` (default `4`).
-- If no usable silence exists before the 25-second maximum, adjacent windows get bounded 1-second context. Both rows carry `no_silence_boundary_fallback` / `adjacent_context_overlap` review signals and `training_eligible=false`; do not train on those full-window labels until they are resolved.
+- The 18-second target and 25-second maximum are planning goals. A deterministic scorer searches toward a configurable 30-second-or-less hard ceiling and prefers agreement among Silero VAD gaps, waveform low-energy gaps, and local Faster-Whisper word/phrase timing.
+- The audio-labeling LLM remains text-only. Faster-Whisper timing is cached outside the dataset with a local-model artifact fingerprint, library/decode/acoustic settings, and source hash; it is boundary and post-label validation evidence, never an exported transcript label.
+- If continuous speech still has no grounded safe boundary, the previous row owns audio through the handoff and can remain eligible. Only the next labeling input gets bounded pre-roll; its exported training WAV is a distinct owned crop and it stays review-only until the local-ASR consistency gate resolves a target-only label.
 - pyannote overlap remains audible. The default `DAIYA_OVERLAP_MODE=preserve` records overlap intervals and `overlapped_speech_detected` in metadata for review. `legacy-exclude` is the only destructive mode and exists solely for controlled comparisons; it is not appropriate for new labeling.
 
-Every new row contains exact normalized-audio source timestamps (six decimal places), source identity, output audio SHA-256, segmentation version/config ID, VAD evidence, overlap evidence, and fallback status. This makes regenerated runs auditable without treating an approximate timestamp match as identical audio.
+Every new row contains exact owned and labeling-audio source timestamps (six decimal places), target offset, source identity, output audio SHA-256, segmentation version/config ID, boundary method/confidence/evidence summary, VAD/overlap evidence, local timestamp-evidence provenance, and eligibility reason. This makes regenerated runs auditable without treating an approximate timestamp match as identical audio.
 
 Before replacing an existing dataset, build it at a fresh output path and produce a conservative migration report:
 
@@ -51,19 +52,13 @@ $tmp = 'C:\Temp\daiya-segmentation-benchmark'
 New-Item -ItemType Directory -Force $tmp | Out-Null
 ffmpeg -ss 3600 -t 600 -i C:\datasets\raw\Th-En_sample_11.m4a `
   -ac 1 -ar 16000 -c:a pcm_s16le "$tmp\sample11-3600-4200.wav"
-0..9 | ForEach-Object {
-  ffmpeg -ss ($_ * 60) -t 60 -i "$tmp\sample11-3600-4200.wav" `
-    -ac 1 -ar 16000 -c:a pcm_s16le "$tmp\part-$('{0:D2}' -f $_).wav"
-}
-$parts = Get-ChildItem $tmp -Filter 'part-*.wav' | Sort-Object Name | Select-Object -ExpandProperty FullName
-uv run python scripts/benchmark_segmentation.py @parts `
+uv run python scripts/benchmark_timestamp_ownership.py "$tmp\sample11-3600-4200.wav" `
   --reference-labels ..\..\dataset\manual-label\m2-label-ref\ref_labels.txt `
-  --source-offset-seconds 3600 --raw-source-name Th-En_sample_11.m4a `
-  --old-metadata C:\datasets\old\metadata.jsonl `
-  --output output\benchmarks\sample11-wall-clock.json
+  --timestamp-model C:\JokaMain\ProjectShowRoom\daiya-rmt\training\whisper\runs\m3.1\converted\checkpoint-588-ct2-int8_float16 `
+  --output output\benchmarks\sample11-timestamp-ownership.json
 ```
 
-The benchmark reports coverage/missed human-reference speech, duration distributions, duplicate window context, boundary precision/recall/F1 (a collar-based proxy), a boundary-in-speech proxy, and high-risk pre-change rows. It does not claim transcription or LLM-label quality unless both runs use identical source spans.
+The timestamp benchmark compares a faithful wall-clock-v2 baseline with ownership segmentation. It reports retained/missed human-reference speech, unprotected boundaries inside reference speech, fallback handoffs/rows, duplicated labeling versus eligible-training seconds, duration distributions, evidence coverage/disagreement, changed rows, and concrete handoffs. It does not claim LLM timestamps, transcription quality, or universal reference coverage from a limited window.
 
 FFmpeg must be available on `PATH`, or set `DAIYA_FFMPEG_BIN`.
 

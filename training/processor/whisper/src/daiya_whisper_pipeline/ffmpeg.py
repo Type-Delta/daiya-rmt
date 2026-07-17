@@ -101,13 +101,13 @@ def normalize_audio_files(paths: list[Path], config: PipelineConfig) -> list[Nor
     return normalized
 
 
-def export_chunk(chunk: Chunk, config: PipelineConfig) -> None:
-    chunk.chunk_path.parent.mkdir(parents=True, exist_ok=True)
+def _export_interval(source: Path, destination: Path, start: float, end: float, config: PipelineConfig) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
     # Never concatenate VAD islands.  Doing so deleted short pauses and any
     # VAD false-negative gap from the audio seen by the labeler.  A Chunk is a
     # single wall-clock window and its VAD islands remain metadata only.
     filter_complex = (
-        f"[0:a]atrim=start={chunk.start:.6f}:end={chunk.end:.6f},"
+        f"[0:a]atrim=start={start:.6f}:end={end:.6f},"
         "asetpts=PTS-STARTPTS[out]"
     )
 
@@ -118,7 +118,7 @@ def export_chunk(chunk: Chunk, config: PipelineConfig) -> None:
         "error",
         "-y",
         "-i",
-        str(chunk.source.normalized_path),
+        str(source),
         "-filter_complex",
         filter_complex,
         "-map",
@@ -130,4 +130,21 @@ def export_chunk(chunk: Chunk, config: PipelineConfig) -> None:
         "-c:a",
         config.audio_codec,
     ]
-    _run_ffmpeg_atomic(cmd, chunk.chunk_path)
+    _run_ffmpeg_atomic(cmd, destination)
+
+
+def export_chunk(chunk: Chunk, config: PipelineConfig) -> None:
+    """Export a disjoint owned artifact and, only when needed, labeler pre-roll.
+
+    The pre-roll WAV is a private labeling input.  The owned WAV at
+    ``chunk_path`` is the only file the dataset exporter can publish.
+    """
+    _export_interval(chunk.source.normalized_path, chunk.chunk_path, chunk.start, chunk.end, config)
+    if chunk.has_labeling_preroll:
+        _export_interval(
+            chunk.source.normalized_path,
+            chunk.labeling_path,
+            chunk.labeling_start,
+            chunk.labeling_end,
+            config,
+        )

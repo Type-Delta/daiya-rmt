@@ -108,6 +108,23 @@ class ServerTests(unittest.TestCase):
             with self.assertRaisesRegex(RequestError, "Duplicate canonical metadata identity"):
                 normalise_rows(metadata, None, root)
 
+    def test_normalise_direct_metadata_allows_multiple_owned_clips_from_one_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            metadata = root / "metadata.jsonl"
+            metadata.write_text(
+                "\n".join(
+                    json.dumps(row)
+                    for row in (
+                        {"file_name": "train/source-0000.wav", "source_id": "same-recording", "text": "one"},
+                        {"file_name": "train/source-0001.wav", "source_id": "same-recording", "text": "two"},
+                    )
+                ) + "\n",
+                encoding="utf-8",
+            )
+            rows = normalise_rows(metadata, None, root)
+            self.assertEqual([row["id"] for row in rows], ["train/source-0000.wav", "train/source-0001.wav"])
+
     def test_auto_label_rejects_all_path_overlaps_and_nonempty_targets(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

@@ -6,10 +6,10 @@ from collections import Counter, defaultdict
 from hashlib import sha256
 import json
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 
-SCHEMA_VERSION = "daiya-segmentation-mapping-1"
+SCHEMA_VERSION = "daiya-segmentation-mapping-2"
 _TIMESTAMP_TOLERANCE_SECONDS = 0.000_001
 
 
@@ -58,8 +58,14 @@ def _number(row: dict[str, Any], key: str) -> float | None:
 
 
 def _span(row: dict[str, Any]) -> tuple[float, float] | None:
-    start = _number(row, "source_start")
-    end = _number(row, "source_end")
+    # Timestamp-ownership exports keep source_start/source_end as legacy
+    # aliases, but prefer the explicit owned range so a labeler pre-roll can
+    # never make a review look reusable through approximate overlap.
+    start = _number(row, "owned_source_start")
+    end = _number(row, "owned_source_end")
+    if start is None or end is None:
+        start = _number(row, "source_start")
+        end = _number(row, "source_end")
     if start is None or end is None or end <= start:
         return None
     return start, end

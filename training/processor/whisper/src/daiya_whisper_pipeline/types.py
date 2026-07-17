@@ -39,6 +39,19 @@ class Chunk:
     context_overlap_before_seconds: float = 0.0
     context_overlap_after_seconds: float = 0.0
     training_eligible: bool = True
+    # ``intervals`` is the source-time range owned by this row.  A fallback
+    # labeler input may begin earlier, but that audible pre-roll is never part
+    # of the exported training artifact.
+    labeling_interval: Interval | None = None
+    labeling_chunk_path: Path | None = None
+    boundary_method: str = "vad_group"
+    boundary_confidence: float = 0.0
+    boundary_evidence: dict[str, object] = field(default_factory=dict)
+    evidence_provenance: dict[str, object] = field(default_factory=dict)
+    # Private local-ASR timing retained only while the pipeline labels a row.
+    # Export uses ``evidence_provenance`` and never exposes these word strings.
+    alignment_words: tuple[object, ...] = ()
+    eligibility_reason: str = "owned_audio"
     segmentation_version: str = ""
     segmentation_config_id: str = ""
 
@@ -57,8 +70,33 @@ class Chunk:
 
     @property
     def duration(self) -> float:
-        """Duration of the exported, contiguous source window."""
+        """Duration of the owned, exported training window."""
         return self.end - self.start
+
+    @property
+    def labeling_start(self) -> float:
+        return self.labeling_interval.start if self.labeling_interval else self.start
+
+    @property
+    def labeling_end(self) -> float:
+        return self.labeling_interval.end if self.labeling_interval else self.end
+
+    @property
+    def labeling_duration(self) -> float:
+        return self.labeling_end - self.labeling_start
+
+    @property
+    def target_offset_seconds(self) -> float:
+        """Owned-target start relative to the audio supplied to the labeler."""
+        return self.start - self.labeling_start
+
+    @property
+    def has_labeling_preroll(self) -> bool:
+        return self.target_offset_seconds > 0.000_001
+
+    @property
+    def labeling_path(self) -> Path:
+        return self.labeling_chunk_path or self.chunk_path
 
 
 @dataclass

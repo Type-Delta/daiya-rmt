@@ -1331,9 +1331,26 @@ function App() {
                     {typeof selected.sourceStart === "number" &&
                       typeof selected.sourceEnd === "number" && (
                         <span>
-                          source {selected.sourceStart}s–{selected.sourceEnd}s
+                          owned source {selected.sourceStart}s–{selected.sourceEnd}s
                         </span>
                       )}
+                    {typeof selected.labelingStart === "number" &&
+                      typeof selected.labelingEnd === "number" &&
+                      selected.labelingStart !== selected.sourceStart && (
+                        <span>
+                          labeler audio {selected.labelingStart}s–{selected.labelingEnd}s
+                          {typeof selected.targetOffset === "number" && ` · target starts +${selected.targetOffset}s`}
+                        </span>
+                      )}
+                    {selected.boundaryMethod && (
+                      <span>
+                        boundary {selected.boundaryMethod.replaceAll("_", " ")}
+                        {typeof selected.boundaryConfidence === "number" && ` · ${selected.boundaryConfidence.toFixed(2)}`}
+                      </span>
+                    )}
+                    {!selected.trainingEligible && (
+                      <span title={selected.eligibilityReason || "Requires review"}>review-only · not eligible for training</span>
+                    )}
                   </div>
                   <div className="audio-strip">
                     <div>

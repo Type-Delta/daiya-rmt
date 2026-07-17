@@ -398,7 +398,14 @@ def normalise_rows(metadata_path: Path, manifest_path: Path | None, audio_root: 
         source = nested_source(row)
         uri = str(row.get("source_uri") or source.get("uri") or row.get("file_name") or row.get("uri") or "").replace("\\", "/")
         meta = metadata_by_key.get(uri, row)
-        row_id = str(row.get("source_id") or source.get("source_id") or meta.get("id") or f"line-{index}")
+        # A source ID identifies a recording, not a clip.  Direct metadata
+        # review therefore uses the exported clip identity; manifest entries
+        # retain their explicit canonical source ID for backwards compatibility.
+        row_id = (
+            str(row.get("source_id") or source.get("source_id") or meta.get("id") or f"line-{index}")
+            if manifest_path
+            else metadata_key(meta, index)
+        )
         if row_id in row_ids:
             raise RequestError(f"Duplicate canonical row identity {row_id!r} in the loaded review queue.")
         row_ids.add(row_id)
@@ -406,6 +413,10 @@ def normalise_rows(metadata_path: Path, manifest_path: Path | None, audio_root: 
         proposed = row.get("proposed_label")
         proposed_text = proposed.get("text") if isinstance(proposed, dict) else None
         audio_path = (audio_root / uri).resolve() if uri else None
+        segmentation = meta.get("segmentation") if isinstance(meta.get("segmentation"), dict) else {}
+        ownership = segmentation.get("ownership") if isinstance(segmentation.get("ownership"), dict) else {}
+        boundary = segmentation.get("boundary") if isinstance(segmentation.get("boundary"), dict) else {}
+        reasons = list_value(row.get("reasons", [])) or list_value(meta.get("review_signals", []))
         normalised.append({
             "id": row_id,
             "index": index,
@@ -417,10 +428,17 @@ def normalise_rows(metadata_path: Path, manifest_path: Path | None, audio_root: 
             "proposedLabel": str(proposed_text) if proposed_text is not None else None,
             "language": str(meta.get("language") or "mixed"),
             "duration": meta.get("speech_duration", meta.get("duration_seconds")),
-            "reasons": list_value(row.get("reasons", [])),
+            "reasons": reasons,
             "evidence": evidence_value(row),
-            "sourceStart": meta.get("source_start"),
-            "sourceEnd": meta.get("source_end"),
+            "sourceStart": meta.get("owned_source_start", meta.get("source_start")),
+            "sourceEnd": meta.get("owned_source_end", meta.get("source_end")),
+            "labelingStart": meta.get("labeling_audio_source_start", ownership.get("labeling_audio_source_start")),
+            "labelingEnd": meta.get("labeling_audio_source_end", ownership.get("labeling_audio_source_end")),
+            "targetOffset": meta.get("target_offset_seconds", ownership.get("target_offset_seconds")),
+            "boundaryMethod": boundary.get("method"),
+            "boundaryConfidence": boundary.get("confidence"),
+            "trainingEligible": bool(meta.get("training_eligible", True)),
+            "eligibilityReason": meta.get("training_eligibility_reason"),
         })
     return normalised
 

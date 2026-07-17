@@ -22,6 +22,13 @@ export interface LabelRow {
   evidence: Evidence[];
   sourceStart: number | null;
   sourceEnd: number | null;
+  labelingStart: number | null;
+  labelingEnd: number | null;
+  targetOffset: number | null;
+  boundaryMethod: string | null;
+  boundaryConfidence: number | null;
+  trainingEligible: boolean;
+  eligibilityReason: string | null;
   reviewed: boolean;
 }
 

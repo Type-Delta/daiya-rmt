@@ -77,12 +77,19 @@ def _interval_rows(intervals: tuple[object, ...]) -> list[dict[str, float]]:
 
 def _row(item: LabeledChunk, target_name: str, config: PipelineConfig) -> dict[str, object]:
     chunk = item.chunk
+    training_eligible = bool(item.extra.get("training_eligible", chunk.training_eligible))
+    eligibility_reason = str(item.extra.get("training_eligibility_reason") or chunk.eligibility_reason)
+    alignment = item.extra.get("ownership_alignment")
     overlap_seconds = sum(interval.duration for interval in chunk.overlap_intervals)
     review_signals: list[str] = []
     if chunk.overlap_intervals:
         review_signals.append("overlapped_speech_detected")
-    if chunk.context_overlap_before_seconds or chunk.context_overlap_after_seconds:
-        review_signals.extend(("no_silence_boundary_fallback", "adjacent_context_overlap"))
+    if chunk.has_labeling_preroll:
+        review_signals.extend(("continuous_speech_fallback", "labeling_preroll_context"))
+        if not training_eligible:
+            review_signals.append("owned_target_alignment_required")
+    if chunk.context_overlap_after_seconds:
+        review_signals.append("legacy_adjacent_context_overlap")
     return {
         "file_name": target_name.replace("\\", "/"),
         config.text_column: collapse_hesitation_repeats(normalize_thai_spacing(item.transcript_text)),
@@ -95,7 +102,15 @@ def _row(item: LabeledChunk, target_name: str, config: PipelineConfig) -> dict[s
         # no timestamp is reconstructed from a concatenated clip.
         "source_start": round(chunk.start, 6),
         "source_end": round(chunk.end, 6),
+        # Explicit ownership schema. ``source_*`` remains the owned alias for
+        # legacy tools, never the longer labeling input.
+        "owned_source_start": round(chunk.start, 6),
+        "owned_source_end": round(chunk.end, 6),
+        "labeling_audio_source_start": round(chunk.labeling_start, 6),
+        "labeling_audio_source_end": round(chunk.labeling_end, 6),
+        "target_offset_seconds": round(chunk.target_offset_seconds, 6),
         "window_duration": round(chunk.duration, 6),
+        "labeling_audio_duration": round(chunk.labeling_duration, 6),
         "speech_duration": round(chunk.speech_duration, 6),
         "audio_sha256": _audio_sha256(chunk.chunk_path),
         "segmentation": {
@@ -107,13 +122,31 @@ def _row(item: LabeledChunk, target_name: str, config: PipelineConfig) -> dict[s
             "overlap_seconds": round(overlap_seconds, 6),
             "context_overlap_before_seconds": round(chunk.context_overlap_before_seconds, 6),
             "context_overlap_after_seconds": round(chunk.context_overlap_after_seconds, 6),
-            "training_eligible": chunk.training_eligible,
+            "ownership": {
+                "owned_source_start": round(chunk.start, 6),
+                "owned_source_end": round(chunk.end, 6),
+                "labeling_audio_source_start": round(chunk.labeling_start, 6),
+                "labeling_audio_source_end": round(chunk.labeling_end, 6),
+                "target_offset_seconds": round(chunk.target_offset_seconds, 6),
+                "training_artifact": "owned_audio_crop",
+            },
+            "boundary": {
+                "method": chunk.boundary_method,
+                "confidence": round(chunk.boundary_confidence, 6),
+                "evidence": chunk.boundary_evidence,
+            },
+            "timestamp_evidence": chunk.evidence_provenance,
+            "label_alignment": alignment,
+            "training_eligible": training_eligible,
+            "training_eligibility_reason": eligibility_reason,
         },
         "overlap_detected": bool(chunk.overlap_intervals),
         "review_signals": review_signals,
         # Context-fallback rows are visible to labelers but must be resolved
         # before a trainer treats their full-window label as a target.
-        "training_eligible": chunk.training_eligible,
+        "training_eligible": training_eligible,
+        "training_eligibility_reason": eligibility_reason,
+        "ownership_alignment": alignment,
         "notes": item.notes,
     }
 

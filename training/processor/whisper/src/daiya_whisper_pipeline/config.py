@@ -57,7 +57,7 @@ def _csv(value: str) -> tuple[str, ...]:
 def segmentation_config_id(config: object) -> str:
     """Stable segmentation identity shared by production and diagnostics."""
     values = {
-        "version": "wall-clock-v2",
+        "version": "timestamp-ownership-v1",
         "vad_threshold": getattr(config, "vad_threshold", None),
         "vad_min_speech_ms": getattr(config, "vad_min_speech_ms", None),
         "vad_min_silence_ms": getattr(config, "vad_min_silence_ms", None),
@@ -67,10 +67,23 @@ def segmentation_config_id(config: object) -> str:
         "min_chunk_seconds": getattr(config, "min_chunk_seconds", None),
         "target_chunk_seconds": getattr(config, "target_chunk_seconds", None),
         "max_chunk_seconds": getattr(config, "max_chunk_seconds", None),
+        "hard_max_chunk_seconds": getattr(config, "hard_max_chunk_seconds", None),
         "merge_gap_seconds": getattr(config, "merge_gap_seconds", None),
         "boundary_min_silence_seconds": getattr(config, "boundary_min_silence_seconds", None),
         "boundary_search_seconds": getattr(config, "boundary_search_seconds", None),
         "fallback_context_seconds": getattr(config, "fallback_context_seconds", None),
+        "boundary_candidate_tolerance_seconds": getattr(config, "boundary_candidate_tolerance_seconds", None),
+        "boundary_min_confidence": getattr(config, "boundary_min_confidence", None),
+        "timestamp_model": getattr(config, "timestamp_model", None),
+        "timestamp_device": getattr(config, "timestamp_device", None),
+        "timestamp_compute_type": getattr(config, "timestamp_compute_type", None),
+        "timestamp_beam_size": getattr(config, "timestamp_beam_size", None),
+        "timestamp_language": getattr(config, "timestamp_language", None),
+        "timestamp_condition_on_previous_text": getattr(config, "timestamp_condition_on_previous_text", None),
+        "energy_window_seconds": getattr(config, "energy_window_seconds", None),
+        "energy_low_percentile": getattr(config, "energy_low_percentile", None),
+        "energy_min_gap_seconds": getattr(config, "energy_min_gap_seconds", None),
+        "label_alignment_min_similarity": getattr(config, "label_alignment_min_similarity", None),
     }
     encoded = json.dumps(values, sort_keys=True, separators=(",", ":"))
     return sha256(encoded.encode("utf-8")).hexdigest()[:16]
@@ -106,10 +119,25 @@ class PipelineConfig:
     min_chunk_seconds: float
     target_chunk_seconds: float
     max_chunk_seconds: float
+    hard_max_chunk_seconds: float
     merge_gap_seconds: float
     boundary_min_silence_seconds: float
     boundary_search_seconds: float
     fallback_context_seconds: float
+    boundary_candidate_tolerance_seconds: float
+    boundary_min_confidence: float
+
+    timestamp_model: str
+    timestamp_evidence_cache_dir: Path
+    timestamp_device: str
+    timestamp_compute_type: str
+    timestamp_beam_size: int
+    timestamp_language: str
+    timestamp_condition_on_previous_text: bool
+    energy_window_seconds: float
+    energy_low_percentile: float
+    energy_min_gap_seconds: float
+    label_alignment_min_similarity: float
 
     torch_device: str
 
@@ -166,12 +194,33 @@ class PipelineConfig:
             min_chunk_seconds=_float("DAIYA_MIN_CHUNK_SECONDS", 1.0),
             target_chunk_seconds=_float("DAIYA_TARGET_CHUNK_SECONDS", 18.0),
             max_chunk_seconds=_float("DAIYA_MAX_CHUNK_SECONDS", 25.0),
+            # Faster-Whisper's practical single-pass context is about 30 s.
+            # 25 s remains a planning goal; this hard ceiling only gives a
+            # high-confidence boundary a little room to avoid a bad cut.
+            hard_max_chunk_seconds=_float("DAIYA_HARD_MAX_CHUNK_SECONDS", 30.0),
             # This is a bridge threshold, not a cue to remove the intervening
             # wall-clock audio.  The silence remains in the exported clip.
             merge_gap_seconds=_float("DAIYA_MERGE_GAP_SECONDS", 0.8),
             boundary_min_silence_seconds=_float("DAIYA_BOUNDARY_MIN_SILENCE_SECONDS", 0.5),
             boundary_search_seconds=_float("DAIYA_BOUNDARY_SEARCH_SECONDS", 4.0),
             fallback_context_seconds=_float("DAIYA_FALLBACK_CONTEXT_SECONDS", 1.0),
+            boundary_candidate_tolerance_seconds=_float("DAIYA_BOUNDARY_CANDIDATE_TOLERANCE_SECONDS", 0.35),
+            boundary_min_confidence=_float("DAIYA_BOUNDARY_MIN_CONFIDENCE", 0.55),
+            # This is intentionally a local CTranslate2/Faster-Whisper model
+            # path or a model id.  The evidence stage never uses the audio LLM.
+            timestamp_model=_str("DAIYA_TIMESTAMP_MODEL", "large-v3"),
+            timestamp_evidence_cache_dir=_path(
+                "DAIYA_TIMESTAMP_EVIDENCE_CACHE_DIR", "cache/timestamp-evidence", base_dir
+            ),
+            timestamp_device=_str("DAIYA_TIMESTAMP_DEVICE", "auto"),
+            timestamp_compute_type=_str("DAIYA_TIMESTAMP_COMPUTE_TYPE", "auto"),
+            timestamp_beam_size=_positive_int("DAIYA_TIMESTAMP_BEAM_SIZE", 5),
+            timestamp_language=_str("DAIYA_TIMESTAMP_LANGUAGE", ""),
+            timestamp_condition_on_previous_text=_bool(os.getenv("DAIYA_TIMESTAMP_CONDITION_ON_PREVIOUS_TEXT"), False),
+            energy_window_seconds=_float("DAIYA_ENERGY_WINDOW_SECONDS", 0.05),
+            energy_low_percentile=_float("DAIYA_ENERGY_LOW_PERCENTILE", 20.0),
+            energy_min_gap_seconds=_float("DAIYA_ENERGY_MIN_GAP_SECONDS", 0.20),
+            label_alignment_min_similarity=_float("DAIYA_LABEL_ALIGNMENT_MIN_SIMILARITY", 0.45),
             torch_device=_str("DAIYA_TORCH_DEVICE", "cuda"),
             openrouter_api_key=_str("OPENROUTER_API_KEY", ""),
             openrouter_base_url=_str("DAIYA_OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),

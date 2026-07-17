@@ -73,3 +73,24 @@ def test_mapping_report_never_overwrites_an_existing_file(tmp_path: Path) -> Non
     with pytest.raises(FileExistsError, match="Refusing to overwrite"):
         write_mapping_report({"schema_version": "test"}, output)
     assert output.read_text(encoding="utf-8") == "keep"
+
+
+def test_mapping_prefers_explicit_owned_ranges_over_labeler_preroll(tmp_path: Path) -> None:
+    digest = sha256(b"owned-target").hexdigest()
+    old = tmp_path / "old.jsonl"
+    new = tmp_path / "new.jsonl"
+    old_row = _row("train/old.wav", 10.0, 12.0, digest)
+    new_row = _row("train/new.wav", 9.0, 12.0, digest)
+    new_row.update(
+        {
+            "owned_source_start": 10.0,
+            "owned_source_end": 12.0,
+            "labeling_audio_source_start": 9.0,
+            "labeling_audio_source_end": 12.0,
+        }
+    )
+    _write_jsonl(old, [old_row])
+    _write_jsonl(new, [new_row])
+
+    report = build_mapping_report(old, new)
+    assert report["clips"][0]["status"] == "unchanged"
