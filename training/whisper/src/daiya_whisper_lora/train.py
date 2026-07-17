@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from hashlib import sha256
 import json
 import inspect
+import random
 import sys
 from collections import Counter
 from dataclasses import dataclass
@@ -85,6 +87,30 @@ class TrainingConfig:
     resume_from_checkpoint: bool = False
     push_to_hub: bool = False
     hub_model_id: str | None = None
+    include_ineligible_for_research: bool = False
+    legacy_training_eligibility: str = "error"
+
+
+@dataclass(frozen=True)
+class TrainingSelection:
+    included: tuple[str, ...]
+    excluded: tuple[str, ...]
+    legacy: tuple[str, ...]
+    include_ineligible_for_research: bool
+    legacy_policy: str
+
+    def provenance(self) -> dict[str, Any]:
+        return {
+            "schema_version": "daiya-training-selection-1",
+            "included_count": len(self.included),
+            "excluded_count": len(self.excluded),
+            "legacy_count": len(self.legacy),
+            "included_identities": list(self.included),
+            "excluded_identities": list(self.excluded),
+            "legacy_identities": list(self.legacy),
+            "include_ineligible_for_research": self.include_ineligible_for_research,
+            "legacy_training_eligibility": self.legacy_policy,
+        }
 
 
 @dataclass
@@ -106,8 +132,17 @@ class DataCollatorSpeechSeq2SeqWithPadding:
         return batch
 
 
-def inspect_dataset(dataset_dir: Path) -> None:
-    dataset = load_audiofolder_dataset(dataset_dir)
+def inspect_dataset(
+    dataset_dir: Path,
+    *,
+    include_ineligible_for_research: bool = False,
+    legacy_training_eligibility: str = "error",
+) -> None:
+    dataset = load_audiofolder_dataset(
+        dataset_dir,
+        include_ineligible_for_research=include_ineligible_for_research,
+        legacy_training_eligibility=legacy_training_eligibility,
+    )
     console.print(f"[bold]Dataset:[/bold] {dataset_dir.resolve()}")
     for split, split_dataset in dataset.items():
         console.print(f"[bold]{split}[/bold]: {len(split_dataset)} rows")
@@ -129,6 +164,83 @@ def safe_for_console(value: Any) -> str:
     text = str(value)
     encoding = getattr(console.file, "encoding", None) or "utf-8"
     return text.encode(encoding, errors="backslashreplace").decode(encoding)
+
+
+def source_split_indices(source_ids: list[str], *, validation_size: float, seed: int) -> tuple[list[int], list[int]]:
+    """Choose validation rows by recording, never by adjacent clip."""
+    if not 0 < validation_size < 1:
+        raise ValueError("validation_size must be between 0 and 1 for source-disjoint splitting")
+    groups: dict[str, list[int]] = {}
+    for index, source_id in enumerate(source_ids):
+        if not source_id:
+            raise ValueError("Source-disjoint validation requires source_id or source_file for every row")
+        groups.setdefault(source_id, []).append(index)
+    if len(groups) < 2:
+        raise ValueError(
+            "Cannot create a source-disjoint validation split from fewer than two recordings. "
+            "Provide explicit train/validation directories with disjoint source identities."
+        )
+    keys = sorted(groups)
+    random.Random(seed).shuffle(keys)
+    validation_group_count = max(1, min(len(keys) - 1, round(len(keys) * validation_size)))
+    validation_sources = set(keys[:validation_group_count])
+    train = [index for index, source_id in enumerate(source_ids) if source_id not in validation_sources]
+    validation = [index for index, source_id in enumerate(source_ids) if source_id in validation_sources]
+    return train, validation
+
+
+def _source_ids(dataset: Dataset) -> list[str]:
+    source_ids = dataset["source_id"] if "source_id" in dataset.column_names else [None] * len(dataset)
+    source_files = dataset["source_file"] if "source_file" in dataset.column_names else [None] * len(dataset)
+    values = [str(source_id or source_file or "") for source_id, source_file in zip(source_ids, source_files, strict=True)]
+    if any(not value for value in values):
+        raise ValueError(
+            "Source-disjoint validation requires source_id or source_file provenance for every row; "
+            "regenerate legacy metadata or provide pre-split data with provenance."
+        )
+    return values
+
+
+def _assert_source_disjoint(train: Dataset, validation: Dataset) -> None:
+    shared = set(_source_ids(train)) & set(_source_ids(validation))
+    if shared:
+        preview = ", ".join(sorted(shared)[:5])
+        raise ValueError(f"Train and validation share source recordings: {preview}")
+
+
+def feature_cache_key(dataset: DatasetDict, config: TrainingConfig) -> str:
+    """Hash selected rows and feature-affecting configuration for cache reuse."""
+    digest = sha256()
+    digest.update(json.dumps({
+        "schema_version": "daiya-whisper-feature-cache-ownership-1",
+        "model": config.model_name_or_path,
+        "task": config.task,
+        "language": config.language,
+        "language_policy": config.language_policy,
+        "max_label_length": config.max_label_length,
+        "sample_rate": 16_000,
+    }, sort_keys=True, ensure_ascii=False).encode("utf-8"))
+    for split_name in sorted(dataset):
+        split = dataset[split_name]
+        columns = [
+            column
+            for column in (
+                "file_name",
+                "audio_sha256",
+                "source_id",
+                "source_file",
+                "text",
+                "language",
+            )
+            if column in split.column_names
+        ]
+        digest.update(split_name.encode("utf-8"))
+        digest.update(str(len(split)).encode("ascii"))
+        for index in range(len(split)):
+            row = {column: split[column][index] for column in columns}
+            digest.update(json.dumps(row, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+            digest.update(b"\n")
+    return digest.hexdigest()[:20]
 
 
 _power_request_handle = None
@@ -169,6 +281,18 @@ def keep_system_awake() -> None:
 def train(config: TrainingConfig) -> None:
     keep_system_awake()
     config.output_dir.mkdir(parents=True, exist_ok=True)
+    metadata_path = config.dataset_dir / "metadata.jsonl"
+    if metadata_path.is_file():
+        selection = training_selection_from_metadata(
+            metadata_path,
+            include_ineligible_for_research=config.include_ineligible_for_research,
+            legacy_training_eligibility=config.legacy_training_eligibility,
+        )
+        provenance_path = write_training_selection(selection, config.output_dir)
+        console.print(
+            f"[bold]Training selection:[/bold] included={len(selection.included)} "
+            f"excluded={len(selection.excluded)} ({provenance_path.name})"
+        )
 
     processor = load_processor(config)
     dataset = prepare_dataset(config, processor)
@@ -206,13 +330,118 @@ def train(config: TrainingConfig) -> None:
     processor.save_pretrained(str(config.output_dir))
 
 
-def load_audiofolder_dataset(dataset_dir: Path) -> DatasetDict:
+def _row_identity(row: dict[str, Any], line_number: int) -> str:
+    if row.get("file_name"):
+        return str(row["file_name"])
+    source_id = row.get("source_id")
+    owned_start = row.get("owned_source_start", row.get("source_start"))
+    owned_end = row.get("owned_source_end", row.get("source_end"))
+    if source_id and owned_start is not None and owned_end is not None:
+        return f"{source_id}@{owned_start}-{owned_end}"
+    return str(source_id or f"metadata.jsonl#line={line_number}")
+
+
+def select_training_rows(
+    rows: list[tuple[int, dict[str, Any]]],
+    *,
+    include_ineligible_for_research: bool,
+    legacy_training_eligibility: str,
+) -> tuple[list[tuple[int, dict[str, Any]]], TrainingSelection]:
+    """Select explicit ownership-safe rows; never guess a legacy field."""
+    if legacy_training_eligibility not in {"error", "include", "exclude"}:
+        raise ValueError("legacy_training_eligibility must be error, include, or exclude")
+    selected: list[tuple[int, dict[str, Any]]] = []
+    included: list[str] = []
+    excluded: list[str] = []
+    legacy: list[str] = []
+    for line_number, row in rows:
+        identity = _row_identity(row, line_number)
+        value = row.get("training_eligible")
+        if value is None:
+            legacy.append(identity)
+            if legacy_training_eligibility == "error":
+                continue
+            eligible = legacy_training_eligibility == "include"
+            research_override = False
+        elif isinstance(value, bool):
+            eligible = value
+            research_override = include_ineligible_for_research
+        else:
+            raise ValueError(f"training_eligible must be boolean at metadata.jsonl line {line_number}")
+        if eligible or research_override:
+            selected.append((line_number, row))
+            included.append(identity)
+        else:
+            excluded.append(identity)
+    if legacy and legacy_training_eligibility == "error":
+        preview = ", ".join(legacy[:5])
+        raise ValueError(
+            "Dataset lacks training_eligible metadata for legacy rows. "
+            "Regenerate with timestamp-ownership segmentation or explicitly set "
+            f"--legacy-training-eligibility include/exclude. Examples: {preview}"
+        )
+    return selected, TrainingSelection(
+        included=tuple(included),
+        excluded=tuple(excluded),
+        legacy=tuple(legacy),
+        include_ineligible_for_research=include_ineligible_for_research,
+        legacy_policy=legacy_training_eligibility,
+    )
+
+
+def training_selection_from_metadata(
+    metadata_path: Path,
+    *,
+    include_ineligible_for_research: bool,
+    legacy_training_eligibility: str,
+) -> TrainingSelection:
+    rows: list[tuple[int, dict[str, Any]]] = []
+    with metadata_path.open("r", encoding="utf-8") as metadata_file:
+        for line_number, line in enumerate(metadata_file, start=1):
+            if line.strip():
+                value = json.loads(line)
+                if not isinstance(value, dict):
+                    raise ValueError(f"Expected object in {metadata_path}:{line_number}")
+                rows.append((line_number, value))
+    _, selection = select_training_rows(
+        rows,
+        include_ineligible_for_research=include_ineligible_for_research,
+        legacy_training_eligibility=legacy_training_eligibility,
+    )
+    return selection
+
+
+def write_training_selection(selection: TrainingSelection, output_dir: Path) -> Path:
+    path = output_dir / "dataset-selection.json"
+    path.write_text(json.dumps(selection.provenance(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def load_audiofolder_dataset(
+    dataset_dir: Path,
+    *,
+    include_ineligible_for_research: bool = False,
+    legacy_training_eligibility: str = "error",
+) -> DatasetDict:
     if not dataset_dir.exists():
         raise FileNotFoundError(f"Dataset directory does not exist: {dataset_dir}")
 
     metadata_path = dataset_dir / "metadata.jsonl"
     if metadata_path.exists():
-        return load_dataset_from_metadata(dataset_dir, metadata_path)
+        return load_dataset_from_metadata(
+            dataset_dir,
+            metadata_path,
+            include_ineligible_for_research=include_ineligible_for_research,
+            legacy_training_eligibility=legacy_training_eligibility,
+        )
+
+    if legacy_training_eligibility == "error":
+        raise ValueError(
+            "Dataset has no metadata.jsonl and therefore no training_eligible ownership field. "
+            "Pass --legacy-training-eligibility include only for an explicit legacy research run."
+        )
+    if legacy_training_eligibility == "exclude" and not include_ineligible_for_research:
+        raise ValueError("Cannot select ownership-safe rows from metadata-free legacy audiofolder dataset")
 
     dataset = load_dataset("audiofolder", data_dir=str(dataset_dir))
     if not isinstance(dataset, DatasetDict):
@@ -220,27 +449,44 @@ def load_audiofolder_dataset(dataset_dir: Path) -> DatasetDict:
     return dataset
 
 
-def load_dataset_from_metadata(dataset_dir: Path, metadata_path: Path) -> DatasetDict:
+def load_dataset_from_metadata(
+    dataset_dir: Path,
+    metadata_path: Path,
+    *,
+    include_ineligible_for_research: bool = False,
+    legacy_training_eligibility: str = "error",
+) -> DatasetDict:
     rows_by_split: dict[str, list[dict[str, Any]]] = {}
+    parsed_rows: list[tuple[int, dict[str, Any]]] = []
     with metadata_path.open("r", encoding="utf-8") as metadata_file:
         for line_number, line in enumerate(metadata_file, start=1):
             line = line.strip()
             if not line:
                 continue
             row = json.loads(line)
-            file_name = row.get("file_name")
-            text = row.get("text")
-            if not file_name or text is None:
-                raise ValueError(f"Missing file_name or text in {metadata_path}:{line_number}")
+            if not isinstance(row, dict):
+                raise ValueError(f"Expected object in {metadata_path}:{line_number}")
+            parsed_rows.append((line_number, row))
 
-            file_path = dataset_dir / file_name
-            if not file_path.exists():
-                raise FileNotFoundError(f"Audio file referenced by metadata does not exist: {file_path}")
+    selected_rows, _ = select_training_rows(
+        parsed_rows,
+        include_ineligible_for_research=include_ineligible_for_research,
+        legacy_training_eligibility=legacy_training_eligibility,
+    )
+    for line_number, row in selected_rows:
+        file_name = row.get("file_name")
+        text = row.get("text")
+        if not file_name or text is None:
+            raise ValueError(f"Missing file_name or text in {metadata_path}:{line_number}")
 
-            path_parts = Path(file_name).parts
-            split = path_parts[0] if len(path_parts) > 1 else "train"
-            row["audio"] = str(file_path)
-            rows_by_split.setdefault(split, []).append(row)
+        file_path = dataset_dir / file_name
+        if not file_path.exists():
+            raise FileNotFoundError(f"Audio file referenced by metadata does not exist: {file_path}")
+
+        path_parts = Path(file_name).parts
+        split = path_parts[0] if len(path_parts) > 1 else "train"
+        row["audio"] = str(file_path)
+        rows_by_split.setdefault(split, []).append(row)
 
     if not rows_by_split:
         raise ValueError(f"No rows found in metadata file: {metadata_path}")
@@ -259,11 +505,21 @@ def prepare_dataset(config: TrainingConfig, processor: WhisperProcessor) -> Data
     if config.language_policy not in {"metadata", "global", "none"}:
         raise ValueError(f"Unsupported language policy: {config.language_policy}")
 
-    dataset = load_audiofolder_dataset(config.dataset_dir)
+    dataset = load_audiofolder_dataset(
+        config.dataset_dir,
+        include_ineligible_for_research=config.include_ineligible_for_research,
+        legacy_training_eligibility=config.legacy_training_eligibility,
+    )
 
     if "validation" not in dataset:
-        split = dataset["train"].train_test_split(test_size=config.validation_size, seed=config.seed)
-        dataset = DatasetDict(train=split["train"], validation=split["test"])
+        train_indices, validation_indices = source_split_indices(
+            _source_ids(dataset["train"]), validation_size=config.validation_size, seed=config.seed
+        )
+        dataset = DatasetDict(
+            train=dataset["train"].select(train_indices),
+            validation=dataset["train"].select(validation_indices),
+        )
+    _assert_source_disjoint(dataset["train"], dataset["validation"])
 
     dataset = dataset.cast_column("audio", Audio(sampling_rate=16_000))
 
@@ -292,8 +548,10 @@ def prepare_dataset(config: TrainingConfig, processor: WhisperProcessor) -> Data
         example["labels"] = processor.tokenizer(example["text"]).input_ids
         return example
 
-    # ponytail: disk-backed feature cache; in-memory map holds ~8GB of mels and OOMs the box
-    cache_dir = config.output_dir.parent / "feature_cache"
+    # Disk-backed feature caches must never cross ownership selections or
+    # label/config revisions.  Reusing fixed train.arrow filenames could feed
+    # rows excluded by the current eligibility policy back into training.
+    cache_dir = config.output_dir.parent / "feature_cache" / feature_cache_key(dataset, config)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     dataset = dataset.map(

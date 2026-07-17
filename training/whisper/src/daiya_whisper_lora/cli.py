@@ -27,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     inspect_parser = subparsers.add_parser("inspect", help="Print a short dataset summary.")
     add_dataset_args(inspect_parser)
+    add_eligibility_args(inspect_parser)
 
     train_parser = subparsers.add_parser("train", help="Run LoRA fine-tuning.")
     add_dataset_args(train_parser)
@@ -80,6 +81,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     train_parser.add_argument("--push-to-hub", action="store_true")
     train_parser.add_argument("--hub-model-id", default=None)
+    add_eligibility_args(train_parser)
 
     merge_parser = subparsers.add_parser(
         "merge",
@@ -111,6 +113,20 @@ def add_dataset_args(parser: argparse.ArgumentParser) -> None:
         type=Path,
         default=default_dataset_dir(),
         help="Path to the Hugging Face audiofolder dataset.",
+    )
+
+
+def add_eligibility_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--include-ineligible-for-research",
+        action="store_true",
+        help="Research override: include rows marked training_eligible=false. Default excludes them from every split.",
+    )
+    parser.add_argument(
+        "--legacy-training-eligibility",
+        choices=("error", "include", "exclude"),
+        default="error",
+        help="How to handle legacy datasets lacking training_eligible; default refuses to guess.",
     )
 
 
@@ -166,6 +182,8 @@ def config_from_args(args: argparse.Namespace) -> TrainingConfig:
         resume_from_checkpoint=args.resume_from_checkpoint,
         push_to_hub=args.push_to_hub,
         hub_model_id=args.hub_model_id,
+        include_ineligible_for_research=args.include_ineligible_for_research,
+        legacy_training_eligibility=args.legacy_training_eligibility,
     )
 
 
@@ -196,7 +214,11 @@ def main() -> None:
     if args.command == "inspect":
         from .train import inspect_dataset
 
-        inspect_dataset(args.dataset_dir)
+        inspect_dataset(
+            args.dataset_dir,
+            include_ineligible_for_research=args.include_ineligible_for_research,
+            legacy_training_eligibility=args.legacy_training_eligibility,
+        )
         return
 
     if args.command == "train":

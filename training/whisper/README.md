@@ -53,6 +53,8 @@ Defaults:
 
 The dataset loader reads all metadata columns so language can condition label tokenization. Context columns such as `context_before`, `context_after`, and `notes` are not injected into labels because this trainer is for audio-to-transcript LoRA tuning; adding textual context as decoder prompt conditioning should be a separate experiment.
 
+Ownership-safe datasets carry `training_eligible`. Training and validation exclude `false` rows by default and write `dataset-selection.json` beside the run with included/excluded identities. Automatic validation splits are by `source_id`/`source_file`, never by adjacent clip, and explicit splits are rejected if they share a recording. The default for a legacy dataset that lacks the field is to stop rather than guess. Regenerate it, or use the explicit compatibility choice `--legacy-training-eligibility include` (or `exclude`) for a documented research run. `--include-ineligible-for-research` is a separate, explicit override for review-only timestamp-ownership rows. Feature caches are keyed by the selected rows, labels, and preprocessing configuration, so an earlier research override cannot leak rows into a later default run.
+
 Use `--max-train-samples` and `--max-eval-samples` for smoke runs:
 
 ```powershell
