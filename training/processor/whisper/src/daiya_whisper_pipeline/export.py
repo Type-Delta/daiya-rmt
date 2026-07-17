@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import errno
+from hashlib import sha256
 import json
 import os
 import re
@@ -57,17 +58,62 @@ def _atomic_copy(source: Path, target: Path) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _audio_sha256(path: Path) -> str:
+    digest = sha256()
+    with path.open("rb") as handle:
+        while block := handle.read(1024 * 1024):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _interval_rows(intervals: tuple[object, ...]) -> list[dict[str, float]]:
+    # This is intentionally duck-typed so the row builder stays independent of
+    # an audio library and remains easy to inspect in migration tooling.
+    return [
+        {"start": round(float(interval.start), 6), "end": round(float(interval.end), 6)}
+        for interval in intervals
+    ]
+
+
 def _row(item: LabeledChunk, target_name: str, config: PipelineConfig) -> dict[str, object]:
+    chunk = item.chunk
+    overlap_seconds = sum(interval.duration for interval in chunk.overlap_intervals)
+    review_signals: list[str] = []
+    if chunk.overlap_intervals:
+        review_signals.append("overlapped_speech_detected")
+    if chunk.context_overlap_before_seconds or chunk.context_overlap_after_seconds:
+        review_signals.extend(("no_silence_boundary_fallback", "adjacent_context_overlap"))
     return {
         "file_name": target_name.replace("\\", "/"),
         config.text_column: collapse_hesitation_repeats(normalize_thai_spacing(item.transcript_text)),
         "language": item.language or config.language_hint,
         "context_before": item.extra.get("context_before", ""),
         "context_after": item.extra.get("context_after", ""),
-        "source_file": str(item.chunk.source.source_path),
-        "source_start": round(item.chunk.start, 3),
-        "source_end": round(item.chunk.end, 3),
-        "speech_duration": round(item.chunk.speech_duration, 3),
+        "source_file": str(chunk.source.source_path),
+        "source_id": chunk.source.source_id,
+        # Six decimal places preserve exact normalized-audio timestamp intent;
+        # no timestamp is reconstructed from a concatenated clip.
+        "source_start": round(chunk.start, 6),
+        "source_end": round(chunk.end, 6),
+        "window_duration": round(chunk.duration, 6),
+        "speech_duration": round(chunk.speech_duration, 6),
+        "audio_sha256": _audio_sha256(chunk.chunk_path),
+        "segmentation": {
+            "version": chunk.segmentation_version or "legacy-unknown",
+            "config_id": chunk.segmentation_config_id or "legacy-unknown",
+            "window_is_contiguous": len(chunk.intervals) == 1,
+            "vad_speech_intervals": _interval_rows(chunk.speech_intervals),
+            "overlap_intervals": _interval_rows(chunk.overlap_intervals),
+            "overlap_seconds": round(overlap_seconds, 6),
+            "context_overlap_before_seconds": round(chunk.context_overlap_before_seconds, 6),
+            "context_overlap_after_seconds": round(chunk.context_overlap_after_seconds, 6),
+            "training_eligible": chunk.training_eligible,
+        },
+        "overlap_detected": bool(chunk.overlap_intervals),
+        "review_signals": review_signals,
+        # Context-fallback rows are visible to labelers but must be resolved
+        # before a trainer treats their full-window label as a target.
+        "training_eligible": chunk.training_eligible,
         "notes": item.notes,
     }
 

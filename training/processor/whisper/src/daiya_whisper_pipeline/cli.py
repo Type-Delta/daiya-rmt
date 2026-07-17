@@ -13,7 +13,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input-dir", type=Path, help="Override DAIYA_INPUT_DIR.")
     parser.add_argument("--output-dir", type=Path, help="Override DAIYA_OUTPUT_DIR.")
     parser.add_argument("--work-dir", type=Path, help="Override DAIYA_WORK_DIR.")
-    parser.add_argument("--no-overlap-filter", action="store_true", help="Skip pyannote overlapped-speech filtering.")
+    parser.add_argument(
+        "--no-overlap-filter",
+        action="store_true",
+        help="Skip pyannote overlap detection (overlap is preserved in audio by default).",
+    )
     return parser.parse_args()
 
 

@@ -7,6 +7,8 @@ from pathlib import Path
 import subprocess
 import tempfile
 
+import soundfile as sf
+
 from tqdm import tqdm
 
 from .concurrency import bounded_ordered_map
@@ -64,7 +66,19 @@ def normalize_audio_file(path: Path, config: PipelineConfig) -> NormalizedAudio:
         config.audio_codec,
     ]
     _run_ffmpeg_atomic(cmd, output)
-    return NormalizedAudio(source_path=path, normalized_path=output, source_id=source_id)
+    try:
+        duration_seconds: float | None = float(sf.info(output).duration)
+    except RuntimeError:
+        # FFmpeg has already succeeded.  This path mainly keeps lightweight
+        # command-mocking callers compatible; real pipeline output is a valid
+        # WAV and therefore always records its duration.
+        duration_seconds = None
+    return NormalizedAudio(
+        source_path=path,
+        normalized_path=output,
+        source_id=source_id,
+        duration_seconds=duration_seconds,
+    )
 
 
 def normalize_audio_files(paths: list[Path], config: PipelineConfig) -> list[NormalizedAudio]:
@@ -89,23 +103,13 @@ def normalize_audio_files(paths: list[Path], config: PipelineConfig) -> list[Nor
 
 def export_chunk(chunk: Chunk, config: PipelineConfig) -> None:
     chunk.chunk_path.parent.mkdir(parents=True, exist_ok=True)
-
-    filters: list[str] = []
-    labels: list[str] = []
-    for idx, interval in enumerate(chunk.intervals):
-        label = f"a{idx}"
-        filters.append(
-            f"[0:a]atrim=start={interval.start:.3f}:end={interval.end:.3f},"
-            f"asetpts=PTS-STARTPTS[{label}]"
-        )
-        labels.append(f"[{label}]")
-
-    if len(labels) == 1:
-        filter_complex = filters[0]
-        map_label = labels[0]
-    else:
-        filter_complex = ";".join(filters) + ";" + "".join(labels) + f"concat=n={len(labels)}:v=0:a=1[out]"
-        map_label = "[out]"
+    # Never concatenate VAD islands.  Doing so deleted short pauses and any
+    # VAD false-negative gap from the audio seen by the labeler.  A Chunk is a
+    # single wall-clock window and its VAD islands remain metadata only.
+    filter_complex = (
+        f"[0:a]atrim=start={chunk.start:.6f}:end={chunk.end:.6f},"
+        "asetpts=PTS-STARTPTS[out]"
+    )
 
     cmd = [
         config.ffmpeg_bin,
@@ -118,7 +122,7 @@ def export_chunk(chunk: Chunk, config: PipelineConfig) -> None:
         "-filter_complex",
         filter_complex,
         "-map",
-        map_label,
+        "[out]",
         "-ac",
         str(config.channels),
         "-ar",

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
+import json
 from pathlib import Path
 from typing import Iterable
 import os
@@ -33,6 +35,14 @@ def _str(name: str, default: str = "") -> str:
     return os.getenv(name, default)
 
 
+def _choice(name: str, default: str, choices: set[str]) -> str:
+    value = _str(name, default).strip().lower()
+    if value not in choices:
+        choices_text = ", ".join(sorted(choices))
+        raise ValueError(f"{name} must be one of: {choices_text}")
+    return value
+
+
 def _path(name: str, default: str, base_dir: Path) -> Path:
     value = Path(_str(name, default)).expanduser()
     if value.is_absolute():
@@ -42,6 +52,28 @@ def _path(name: str, default: str, base_dir: Path) -> Path:
 
 def _csv(value: str) -> tuple[str, ...]:
     return tuple(item.strip().lower() for item in value.split(",") if item.strip())
+
+
+def segmentation_config_id(config: object) -> str:
+    """Stable segmentation identity shared by production and diagnostics."""
+    values = {
+        "version": "wall-clock-v2",
+        "vad_threshold": getattr(config, "vad_threshold", None),
+        "vad_min_speech_ms": getattr(config, "vad_min_speech_ms", None),
+        "vad_min_silence_ms": getattr(config, "vad_min_silence_ms", None),
+        "vad_speech_pad_ms": getattr(config, "vad_speech_pad_ms", None),
+        "overlap_mode": getattr(config, "overlap_mode", None),
+        "overlap_pad_seconds": getattr(config, "overlap_pad_seconds", None),
+        "min_chunk_seconds": getattr(config, "min_chunk_seconds", None),
+        "target_chunk_seconds": getattr(config, "target_chunk_seconds", None),
+        "max_chunk_seconds": getattr(config, "max_chunk_seconds", None),
+        "merge_gap_seconds": getattr(config, "merge_gap_seconds", None),
+        "boundary_min_silence_seconds": getattr(config, "boundary_min_silence_seconds", None),
+        "boundary_search_seconds": getattr(config, "boundary_search_seconds", None),
+        "fallback_context_seconds": getattr(config, "fallback_context_seconds", None),
+    }
+    encoded = json.dumps(values, sort_keys=True, separators=(",", ":"))
+    return sha256(encoded.encode("utf-8")).hexdigest()[:16]
 
 
 @dataclass(frozen=True)
@@ -66,6 +98,7 @@ class PipelineConfig:
     vad_speech_pad_ms: int
 
     enable_overlap_filter: bool
+    overlap_mode: str
     pyannote_auth_token: str
     pyannote_overlap_model: str
     overlap_pad_seconds: float
@@ -74,6 +107,9 @@ class PipelineConfig:
     target_chunk_seconds: float
     max_chunk_seconds: float
     merge_gap_seconds: float
+    boundary_min_silence_seconds: float
+    boundary_search_seconds: float
+    fallback_context_seconds: float
 
     torch_device: str
 
@@ -114,18 +150,28 @@ class PipelineConfig:
             sample_rate=_int("DAIYA_SAMPLE_RATE", 16000),
             channels=_int("DAIYA_CHANNELS", 1),
             audio_codec=_str("DAIYA_AUDIO_CODEC", "pcm_s16le"),
+            # The offline profile favors speech recall and boundary padding.
+            # PR #10's Silero evidence showed that its balanced/sensitive rows
+            # are materially safer for missing speech than a latency-tuned
+            # streaming profile.
             vad_threshold=_float("DAIYA_VAD_THRESHOLD", 0.5),
             vad_min_speech_ms=_int("DAIYA_VAD_MIN_SPEECH_MS", 250),
             vad_min_silence_ms=_int("DAIYA_VAD_MIN_SILENCE_MS", 150),
             vad_speech_pad_ms=_int("DAIYA_VAD_SPEECH_PAD_MS", 80),
             enable_overlap_filter=_bool(os.getenv("DAIYA_ENABLE_OVERLAP_FILTER"), True),
+            overlap_mode=_choice("DAIYA_OVERLAP_MODE", "preserve", {"preserve", "legacy-exclude"}),
             pyannote_auth_token=_str("DAIYA_PYANNOTE_AUTH_TOKEN", ""),
             pyannote_overlap_model=_str("DAIYA_PYANNOTE_OVERLAP_MODEL", "pyannote/speaker-diarization-community-1"),
             overlap_pad_seconds=_float("DAIYA_OVERLAP_PAD_SECONDS", 0.15),
             min_chunk_seconds=_float("DAIYA_MIN_CHUNK_SECONDS", 1.0),
             target_chunk_seconds=_float("DAIYA_TARGET_CHUNK_SECONDS", 18.0),
             max_chunk_seconds=_float("DAIYA_MAX_CHUNK_SECONDS", 25.0),
-            merge_gap_seconds=_float("DAIYA_MERGE_GAP_SECONDS", 0.35),
+            # This is a bridge threshold, not a cue to remove the intervening
+            # wall-clock audio.  The silence remains in the exported clip.
+            merge_gap_seconds=_float("DAIYA_MERGE_GAP_SECONDS", 0.8),
+            boundary_min_silence_seconds=_float("DAIYA_BOUNDARY_MIN_SILENCE_SECONDS", 0.5),
+            boundary_search_seconds=_float("DAIYA_BOUNDARY_SEARCH_SECONDS", 4.0),
+            fallback_context_seconds=_float("DAIYA_FALLBACK_CONTEXT_SECONDS", 1.0),
             torch_device=_str("DAIYA_TORCH_DEVICE", "cuda"),
             openrouter_api_key=_str("OPENROUTER_API_KEY", ""),
             openrouter_base_url=_str("DAIYA_OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
@@ -153,6 +199,11 @@ class PipelineConfig:
             if path.is_file() and path.suffix.lower() in self.audio_extensions:
                 files.append(path)
         return sorted(files)
+
+    @property
+    def segmentation_config_id(self) -> str:
+        """Stable ID recorded in every metadata row for regeneration audits."""
+        return segmentation_config_id(self)
 
 
 def ensure_dirs(paths: Iterable[Path]) -> None:

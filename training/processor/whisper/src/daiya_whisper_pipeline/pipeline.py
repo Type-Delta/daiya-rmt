@@ -40,7 +40,7 @@ def run_pipeline(config: PipelineConfig) -> None:
             export_chunk(chunk, config)
         chunks.extend(audio_chunks)
 
-    console.print(f"[bold]Built {len(chunks)} clean chunks[/bold]")
+    console.print(f"[bold]Built {len(chunks)} contiguous wall-clock chunks[/bold]")
     if not chunks:
         raise RuntimeError("No chunks survived VAD/overlap filtering")
 

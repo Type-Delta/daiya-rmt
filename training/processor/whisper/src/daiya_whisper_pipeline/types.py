@@ -19,6 +19,10 @@ class NormalizedAudio:
     source_path: Path
     normalized_path: Path
     source_id: str
+    # The source duration is recorded after FFmpeg normalization so segment
+    # boundaries can be clipped before they reach the exporter.  Tests and
+    # callers that construct this value directly may omit it.
+    duration_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -27,6 +31,16 @@ class Chunk:
     intervals: tuple[Interval, ...]
     chunk_path: Path
     index: int
+    # ``intervals`` is deliberately one contiguous wall-clock window for new
+    # chunks.  ``speech_intervals`` keeps the VAD evidence separately: it must
+    # never be used to splice the audio into a speech-only clip.
+    speech_intervals: tuple[Interval, ...] = ()
+    overlap_intervals: tuple[Interval, ...] = ()
+    context_overlap_before_seconds: float = 0.0
+    context_overlap_after_seconds: float = 0.0
+    training_eligible: bool = True
+    segmentation_version: str = ""
+    segmentation_config_id: str = ""
 
     @property
     def start(self) -> float:
@@ -38,7 +52,13 @@ class Chunk:
 
     @property
     def speech_duration(self) -> float:
-        return sum(interval.duration for interval in self.intervals)
+        evidence = self.speech_intervals or self.intervals
+        return sum(interval.duration for interval in evidence)
+
+    @property
+    def duration(self) -> float:
+        """Duration of the exported, contiguous source window."""
+        return self.end - self.start
 
 
 @dataclass
