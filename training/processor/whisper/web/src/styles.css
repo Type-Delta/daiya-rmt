@@ -197,7 +197,8 @@ details .field { margin-top: 10px; }
 .reason-list { display: flex; flex-wrap: wrap; gap: 5px; padding: 12px 14px 0; }
 .reason-list span { padding: 4px 6px; border-radius: 5px; background: color-mix(in oklch, var(--warn) 11%, var(--raised)); color: var(--warn); font-size: 10px; }
 .evidence dl { margin: 0; padding: 9px 14px; }
-.evidence dl > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 9px 0; border-bottom: 1px solid color-mix(in oklch, var(--edge) 68%, transparent); }
+.evidence dl > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding-top: 9px; }
+.evidence hr { border-color: color-mix(in oklch, var(--edge) 68%, transparent); }
 .evidence dt { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
 .evidence dd { display: grid; justify-items: end; gap: 2px; margin: 0; color: var(--ink); font: 11px ui-monospace, "Cascadia Mono", monospace; max-width: 115px; text-align: right; overflow-wrap: anywhere; }
 .evidence dd small { color: var(--faint); font: 10px system-ui, sans-serif; }

@@ -1448,14 +1448,18 @@ function App() {
                     </div>
                   )}
                   <dl>
+                    {/* border-bottom: 1px solid color-mix(in oklch, var(--edge) 68%, transparent); */}
                     {selected.evidence.length ? (
                       selected.evidence.map((item, index) => (
                         <div key={`${item.name}-${index}`}>
+                        <div className="contents">
                           <dt>{item.name.replaceAll("_", " ")}</dt>
                           <dd>
                             {String(item.value)}
                             {item.source && <small>{item.source}</small>}
                           </dd>
+                          {index < selected.evidence.length - 1 && <hr className="col-span-2" />}
+                        </div>
                         </div>
                       ))
                     ) : (
